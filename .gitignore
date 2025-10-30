@@ -1,0 +1,11 @@
+node_modules
+# Keep environment variables out of version control
+.env
+.env.save
+testing-frontend
+package-lock.json
+prisma/migrations
+dist/*
+src/config/deletekafkaGroups.ts
+service-account
+uploads
