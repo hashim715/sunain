@@ -5,6 +5,7 @@ import http from "http";
 import bodyParser from "body-parser";
 import timeout from "connect-timeout";
 import { chatController } from "./controllers/chatController";
+import { uploadRouter } from "./routes/uploadRoutes";
 
 dotenv.config();
 
@@ -32,6 +33,8 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
     .status(500)
     .json({ success: false, message: "Something went wrong try again.." });
 });
+
+app.use("/api/uploadUrl", uploadRouter);
 
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {
