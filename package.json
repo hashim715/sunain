@@ -39,6 +39,7 @@
     "@prisma/client": "^6.1.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "@socket.io/redis-streams-adapter": "^0.2.2",
+    "agora-access-token": "^2.0.4",
     "axios": "^1.7.7",
     "bcrypt": "^5.1.0",
     "connect-timeout": "^1.9.0",
