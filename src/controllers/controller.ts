@@ -14,14 +14,13 @@ export const getSignedUrlFromS3: RequestHandler = async (
   try {
     const fileName = String(req.query.fileName);
     const contentType = String(req.query.contentType);
-    const roomId = String(req.query.roomId || "default");
 
     if (!fileName || !contentType)
       return res.status(400).json({ error: "Missing fileName or contentType" });
 
     const command = new PutObjectCommand({
       Bucket: process.env.S3_BUCKET_NAME!,
-      Key: `${roomId}/${fileName}`,
+      Key: `${fileName}`,
       ContentType: contentType,
     });
 
