@@ -1,0 +1,53 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id Int @id @default(autoincrement())
+  name String
+  username String @unique
+  email String @unique
+  google_email String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  token String?
+  google_login Boolean @default(false)
+  google_access_token String?
+  google_refresh_token String?
+  google_token_expiry String?
+  expiresAt String?
+  phone_number String?
+  profile_image String?
+  details_added Boolean @default(false)
+  date_of_birth String?
+  gender String?
+  race String?
+  area_grown_up String?
+  hear_about_us String?
+  languages String[]
+  languages_rating String[]
+  city String?
+  year_in_city Int?
+  language_apply_for String?
+  language_dialect String?
+  education_level String?
+  language_skills String[] @default(["Speaking", "Listening", "Reading", "Writing"])
+  language_proficieny String[]
+  language_use_types String[] @default(["Home and family", "Work and school", "Socially with friends", "Media consumption"])
+  language_use String[]
+  quiz_answers String[]
+  meetings_attended Int @default(0)
+  user_type String @default("user")
+  channels String[]
+}
