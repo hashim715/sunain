@@ -32,9 +32,6 @@ coverage
 # Ignore package-lock.json files also
 package-lock.json
 
-# Ignore the migration files
-prisma/migrations
-
 # Ignore the dashboard and client apps
 testing-frontend
 
