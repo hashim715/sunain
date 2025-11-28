@@ -42,7 +42,7 @@ RUN chown -R node:node /app
 
 USER node
 
-EXPOSE 5000
+EXPOSE 5001
 
 CMD ["node", "dist/index.js"]
     
