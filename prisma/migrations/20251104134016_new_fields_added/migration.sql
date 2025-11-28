@@ -1,0 +1,18 @@
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN     "area_grown_up" TEXT,
+ADD COLUMN     "cities" TEXT[],
+ADD COLUMN     "date_of_birth" TEXT,
+ADD COLUMN     "details_added" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "education_level" TEXT,
+ADD COLUMN     "gender" TEXT,
+ADD COLUMN     "hear_about_us" TEXT,
+ADD COLUMN     "language_apply_for" TEXT,
+ADD COLUMN     "language_dialect" TEXT,
+ADD COLUMN     "language_proficieny" TEXT[],
+ADD COLUMN     "language_skills" TEXT[] DEFAULT ARRAY['Speaking', 'Listening', 'Reading', 'Writing']::TEXT[],
+ADD COLUMN     "language_use" TEXT[],
+ADD COLUMN     "language_use_types" TEXT[] DEFAULT ARRAY['Home and family', 'Work and school', 'Socially with friends', 'Media consumption']::TEXT[],
+ADD COLUMN     "languages" TEXT[],
+ADD COLUMN     "languages_rating" TEXT[],
+ADD COLUMN     "race" TEXT,
+ADD COLUMN     "year_in_cities" TEXT[];
