@@ -3,6 +3,9 @@ FROM node:22.2.0 AS builder
 
 WORKDIR /app
 
+# Install OpenSSL for build stage
+RUN apt-get update -y && apt-get install -y openssl
+
 # Copy package files
 COPY package*.json ./
 
@@ -24,6 +27,9 @@ FROM node:22.2.0-slim AS production
 
 WORKDIR /app
 
+# Install OpenSSL in production too (required at runtime)
+RUN apt-get update -y && apt-get install -y openssl
+
 # Only copy package.json for prod install
 COPY package*.json ./
 
@@ -33,7 +39,7 @@ RUN npm install --omit=dev
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
 
-# Copy Prisma schema + generated client
+# Copy Prisma schema + generated client + engine
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/prisma ./prisma
 
