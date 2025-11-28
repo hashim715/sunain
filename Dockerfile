@@ -50,5 +50,6 @@ USER node
 
 EXPOSE 5001
 
-CMD ["node", "dist/index.js"]
+# Run Prisma migrations first, then start app
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
     
