@@ -35,68 +35,102 @@ export const chatController = async (
   };
 
   io.on("connection", (socket: Socket): void => {
-    socket.on("join-room", async ({ roomId, user }) => {
-      socket.join(roomId);
+    // socket.on("join-room", async ({ roomId, user }) => {
+    //   socket.join(roomId);
 
-      const existingUsers = await getRoomUsers(roomId);
-      const alreadyInRoom = existingUsers.some((u) => u.id === user.id);
-      if (!alreadyInRoom) {
-        await redis.sadd(
-          `room:${roomId}`,
-          JSON.stringify({ ...user, socketId: socket.id })
-        );
-      }
+    //   const existingUsers = await getRoomUsers(roomId);
+    //   const alreadyInRoom = existingUsers.some((u) => u.id === user.id);
+    //   if (!alreadyInRoom) {
+    //     await redis.sadd(
+    //       `room:${roomId}`,
+    //       JSON.stringify({ ...user, socketId: socket.id })
+    //     );
+    //   }
 
-      socket.to(roomId).emit("user_joined", { remote_user: user });
+    //   socket.to(roomId).emit("user_joined", { remote_user: user });
 
-      const updatedUsers = await getRoomUsers(roomId);
-      socket.emit("existing-users", {
-        users: updatedUsers.filter((u) => u.id !== user.id),
-      });
+    //   const updatedUsers = await getRoomUsers(roomId);
+    //   socket.emit("existing-users", {
+    //     users: updatedUsers.filter((u) => u.id !== user.id),
+    //   });
+    // });
+
+    // socket.on("disconnect", async () => {
+    //   const roomKeys = await redis.keys("room:*");
+
+    //   for (const key of roomKeys) {
+    //     const roomId = key.split(":")[1];
+    //     const user = await removeUserFromRoom(roomId, socket.id);
+    //     if (user) {
+    //       io.to(roomId).emit("user_left", {
+    //         socketId: socket.id,
+    //         remote_user: user,
+    //       });
+    //     }
+    //   }
+    // });
+
+    // socket.on("user_leave", async ({ remote_user, roomId }) => {
+    //   await redis.srem(`room:${roomId}`, JSON.stringify(remote_user));
+    //   socket.to(roomId).emit("user_leave", { remote_user });
+    // });
+
+    // socket.on("offer", ({ roomId, offer }) => {
+    //   socket.to(roomId).emit("offer", offer);
+    // });
+
+    // socket.on("answer", ({ roomId, answer }) => {
+    //   socket.to(roomId).emit("answer", answer);
+    // });
+
+    // socket.on("ice-candidate", ({ roomId, candidate }) => {
+    //   socket.to(roomId).emit("ice-candidate", { candidate });
+    // });
+
+    // socket.on("recording-started", ({ roomId }) => {
+    //   socket.to(roomId).emit("recording-started", { roomId });
+    // });
+
+    // socket.on("recording-stop", ({ roomId }) => {
+    //   socket.to(roomId).emit("recording-stop", { roomId });
+    // });
+
+    // socket.on("recording-restart", ({ roomId }) => {
+    //   socket.to(roomId).emit("recording-restart", { roomId });
+    // });
+
+    socket.on("join-meeting", ({ meetingName, userName, isHost }) => {
+      socket.join(meetingName);
+      console.log(
+        `${userName} joined meeting: ${meetingName} as ${
+          isHost ? "Host" : "Participant"
+        }`
+      );
     });
 
-    socket.on("disconnect", async () => {
-      const roomKeys = await redis.keys("room:*");
-
-      for (const key of roomKeys) {
-        const roomId = key.split(":")[1];
-        const user = await removeUserFromRoom(roomId, socket.id);
-        if (user) {
-          io.to(roomId).emit("user_left", {
-            socketId: socket.id,
-            remote_user: user,
-          });
-        }
-      }
+    socket.on("recording-started", (data) => {
+      socket.to(data.meetingName).emit("recording-started", data);
     });
 
-    socket.on("user_leave", async ({ remote_user, roomId }) => {
-      await redis.srem(`room:${roomId}`, JSON.stringify(remote_user));
-      socket.to(roomId).emit("user_leave", { remote_user });
+    socket.on("recording-stopped", (data) => {
+      socket.to(data.meetingName).emit("recording-stopped", data);
     });
 
-    socket.on("offer", ({ roomId, offer }) => {
-      socket.to(roomId).emit("offer", offer);
+    socket.on("participant-left-during-recording", (data) => {
+      console.log("Participant left during recording:", data);
+
+      socket
+        .to(data.meetingName)
+        .emit("participant-left-during-recording", data);
     });
 
-    socket.on("answer", ({ roomId, answer }) => {
-      socket.to(roomId).emit("answer", answer);
+    socket.on("leave-meeting", ({ meetingName, userName }) => {
+      socket.leave(meetingName);
+      console.log(`${userName} left meeting: ${meetingName}`);
     });
 
-    socket.on("ice-candidate", ({ roomId, candidate }) => {
-      socket.to(roomId).emit("ice-candidate", { candidate });
-    });
-
-    socket.on("recording-started", ({ roomId }) => {
-      socket.to(roomId).emit("recording-started", { roomId });
-    });
-
-    socket.on("recording-stop", ({ roomId }) => {
-      socket.to(roomId).emit("recording-stop", { roomId });
-    });
-
-    socket.on("recording-restart", ({ roomId }) => {
-      socket.to(roomId).emit("recording-restart", { roomId });
+    socket.on("disconnect", () => {
+      // console.log("User disconnected:", socket.id);
     });
   });
 };

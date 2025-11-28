@@ -10,7 +10,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url      = env("DATABASE_URL")  
 }
 
 model User {
@@ -50,4 +50,29 @@ model User {
   meetings_attended Int @default(0)
   user_type String @default("user")
   channels String[]
+}
+
+model Recording {
+  id                Int      @id @default(autoincrement())
+  meetingName       String
+  recordingNumber   Int
+  participantNumber Int
+  s3Key             String
+  s3Url             String
+  status            String   @default("processing") // "processing", "completed", "incomplete"
+  createdAt         DateTime @default(now())
+
+  @@index([meetingName, recordingNumber])
+}
+
+model RecordingSession {
+  id              Int      @id @default(autoincrement())
+  meetingName     String   @unique
+  recordingNumber Int
+  isRecording     Boolean  @default(false)
+  startedAt       DateTime @default(now())
+  participantCount Int     @default(0)
+  status          String   @default("active") // "active", "interrupted", "completed"
+  
+  @@index([meetingName])
 }

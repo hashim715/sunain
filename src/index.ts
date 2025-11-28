@@ -9,6 +9,8 @@ import { uploadRouter } from "./routes/uploadRoutes";
 import { logger } from "./utils/logger";
 import { authRouter } from "./routes/authRoutes";
 import { userRouter } from "./routes/userRoutes";
+import { ZoomAuthEndpointRouter } from "./routes/zoomAuthEndpointRoutes";
+import { zoomRouter } from "./routes/zoomRoutes";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 
@@ -28,6 +30,8 @@ const allowedOrigins = [
   "https://beta.ourlisa.com",
   "http://192.168.1.168:5173",
   "http://0.0.0.0:5173",
+  "https://82b93bfbbf3f.ngrok-free.app",
+  "https://0e750b02e8f3.ngrok-free.app",
 ];
 
 app.use(express.json());
@@ -77,59 +81,8 @@ app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
 app.use("/v1/uploadUrl", uploadRouter);
 app.use("/v1/auth", authRouter);
 app.use("/v1/user", userRouter);
-
-// Simplified endpoint for publisher role (using uid)
-// app.get("/token", nocache, (req: RtcParams, res: Response) => {
-//   // 1. Basic configuration checks
-//   if (!APP_ID || !APP_CERTIFICATE) {
-//     return res.status(500).json({
-//       error: "Agora credentials not configured in environment variables",
-//     });
-//   }
-
-//   const { channel, uid } = req.query;
-
-//   if (!channel) {
-//     return res.status(400).json({ error: "channel parameter is required" });
-//   }
-
-//   // 2. Determine user ID and expiration
-//   const userId: number = uid ? parseInt(uid, 10) : 0; // Default to 0 if not provided
-
-//   if (isNaN(userId)) {
-//     return res.status(400).json({ error: "Invalid UID. Must be a number" });
-//   }
-
-//   const expirationTimeInSeconds: number = 3600; // 1 hour default
-//   const currentTimestamp: number = Math.floor(Date.now() / 1000);
-//   const privilegeExpiredTs: number = currentTimestamp + expirationTimeInSeconds;
-
-//   try {
-//     // 3. Generate token
-//     const token: string = RtcTokenBuilder.buildTokenWithUid(
-//       APP_ID,
-//       APP_CERTIFICATE,
-//       channel,
-//       userId,
-//       RtcRole.PUBLISHER, // Always PUBLISHER for this endpoint
-//       privilegeExpiredTs
-//     );
-
-//     // 4. Success response
-//     return res.json({
-//       token,
-//       appId: APP_ID,
-//       channel,
-//       uid: userId,
-//     });
-//   } catch (error) {
-//     console.error("Error generating token:", error);
-//     return res.status(500).json({
-//       error: "Failed to generate token",
-//       details: error instanceof Error ? error.message : "Unknown error",
-//     });
-//   }
-// });
+app.use("/v1/zoomSDKAuth", ZoomAuthEndpointRouter);
+app.use("/v1/zoom", zoomRouter);
 
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {

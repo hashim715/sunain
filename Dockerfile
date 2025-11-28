@@ -1,25 +1,48 @@
-FROM node:22.2.0
+# ------------ BUILD STAGE ------------
+FROM node:22.2.0 AS builder
 
-WORKDIR /usr/src/app
+WORKDIR /app
 
+# Copy package files
 COPY package*.json ./
 
+# Install ALL dependencies (including dev) for build
 RUN npm install
 
-RUN npm install nodemon
-
+# Copy full source
 COPY . .
 
-RUN rm -rf node_modules/long
+# Prisma generate
+RUN npx prisma generate
 
+# Build project
 RUN npm run build
 
-RUN npx prisma generate 
 
-EXPOSE 5000
+# ------------ PRODUCTION STAGE ------------
+FROM node:22.2.0-slim AS production
 
-RUN chown -R node /usr/src/app
+WORKDIR /app
+
+# Only copy package.json for prod install
+COPY package*.json ./
+
+# Install ONLY production dependencies
+RUN npm install --omit=dev
+
+# Copy built files from builder
+COPY --from=builder /app/dist ./dist
+
+# Copy Prisma schema + generated client
+COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder /app/prisma ./prisma
+
+# Fix permissions
+RUN chown -R node:node /app
 
 USER node
 
-CMD ["npm","run","dev"]
+EXPOSE 5000
+
+CMD ["node", "dist/index.js"]
+    
