@@ -79,7 +79,7 @@ export const handleParticipantLeft: RequestHandler = async (
   res: Response
 ) => {
   try {
-    const { meetingName, leftUserName } = req.body;
+    const { meetingName } = req.body;
 
     const currentSession = await prisma.recordingSession.findFirst({
       where: {
@@ -116,13 +116,4 @@ export const handleParticipantLeft: RequestHandler = async (
     console.error("Error handling participant left:", error);
     return res.status(500).json({ error: "Failed to process" });
   }
-};
-
-const getNextRecordingNumber = async (meetingName: string): Promise<number> => {
-  const latestRecording = await prisma.recordingSession.findFirst({
-    where: { meetingName },
-    orderBy: { recordingNumber: "desc" },
-  });
-
-  return latestRecording ? latestRecording.recordingNumber + 1 : 1;
 };
