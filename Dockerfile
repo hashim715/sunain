@@ -10,7 +10,7 @@ RUN apt-get update -y && apt-get install -y openssl && apt-get clean && rm -rf /
 COPY package*.json ./
 
 # Install ALL dependencies (including dev) for build
-RUN npm ci
+RUN npm install
 
 # Copy full source
 COPY . .
@@ -34,7 +34,7 @@ RUN apt-get update -y && apt-get install -y openssl && apt-get clean && rm -rf /
 COPY package*.json ./
 
 # Install ONLY production dependencies
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist

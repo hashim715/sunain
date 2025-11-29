@@ -1,6 +1,6 @@
 version: "3"
 services:
-  w-app-backend:
+  audio-dataset-backend:
     image: audio-dataset-backend
     container_name: audio-dataset-backend
     build: .
