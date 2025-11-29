@@ -9,6 +9,7 @@ import { uploadRouter } from "./routes/uploadRoutes";
 import { logger } from "./utils/logger";
 import { authRouter } from "./routes/authRoutes";
 import { userRouter } from "./routes/userRoutes";
+import { healthCheckRouter } from "./routes/healthCheckRoutes";
 import { ZoomAuthEndpointRouter } from "./routes/zoomAuthEndpointRoutes";
 import { zoomRouter } from "./routes/zoomRoutes";
 import helmet from "helmet";
@@ -83,6 +84,7 @@ app.use("/v1/auth", authRouter);
 app.use("/v1/user", userRouter);
 app.use("/v1/zoomSDKAuth", ZoomAuthEndpointRouter);
 app.use("/v1/zoom", zoomRouter);
+app.use("/v1/health", healthCheckRouter);
 
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {
