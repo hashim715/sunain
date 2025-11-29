@@ -44,7 +44,7 @@ export const healthChecker: RequestHandler = async (
 
       await s3Client.send(
         new HeadBucketCommand({
-          Bucket: process.env.AWS_S3_BUCKET_NAME!,
+          Bucket: process.env.S3_BUCKET_NAME!,
         })
       );
       healthcheck.checks.s3 = "healthy";
