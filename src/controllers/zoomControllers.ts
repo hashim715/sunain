@@ -1,7 +1,7 @@
 import { Request, Response, RequestHandler } from "express";
 import { prisma } from "../config/postgres";
 
-export const startRecording: RequestHandler = async (req, res) => {
+export const startRecordingSession: RequestHandler = async (req, res) => {
   try {
     const { meetingName, participantCount } = req.body;
 
