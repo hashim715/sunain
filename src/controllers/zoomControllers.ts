@@ -1,42 +1,36 @@
 import { Request, Response, RequestHandler } from "express";
 import { prisma } from "../config/postgres";
 
-export const startRecordingSession: RequestHandler = async (
-  req: Request,
-  res: Response
-) => {
+export const startRecording: RequestHandler = async (req, res) => {
   try {
     const { meetingName, participantCount } = req.body;
 
-    const recordingNumber = await getNextRecordingNumber(meetingName);
-
-    await prisma.recordingSession.upsert({
+    const lastSession = await prisma.recordingSession.findFirst({
       where: { meetingName },
-      update: {
-        isRecording: true,
-        recordingNumber,
-        participantCount,
-        status: "active",
-        startedAt: new Date(),
-      },
-      create: {
+      orderBy: { recordingNumber: "desc" },
+    });
+
+    const nextRecordingNumber = lastSession
+      ? lastSession.recordingNumber + 1
+      : 1;
+
+    await prisma.recordingSession.create({
+      data: {
         meetingName,
-        recordingNumber,
+        recordingNumber: nextRecordingNumber,
+        recordingStartTime: new Date(),
         isRecording: true,
         participantCount,
         status: "active",
       },
     });
 
-    console.log(`✅ Recording session started: recording-${recordingNumber}`);
-
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
-      recordingNumber,
+      recordingNumber: nextRecordingNumber,
     });
   } catch (error) {
-    console.error("Error starting recording session:", error);
-    return res.status(500).json({ error: "Failed to start session" });
+    res.status(500).json({ error: "Failed to start recording" });
   }
 };
 
@@ -47,16 +41,35 @@ export const stopRecordingSession: RequestHandler = async (
   try {
     const { meetingName } = req.body;
 
+    const currentSession = await prisma.recordingSession.findFirst({
+      where: {
+        meetingName,
+        isRecording: true,
+        status: "active",
+      },
+      orderBy: { recordingNumber: "desc" },
+    });
+
+    if (!currentSession) {
+      return res
+        .status(404)
+        .json({ error: "No active recording session found" });
+    }
+
     await prisma.recordingSession.update({
-      where: { meetingName },
+      where: { id: currentSession.id },
       data: {
         isRecording: false,
         status: "completed",
       },
     });
 
-    return res.status(200).json({ success: true });
+    return res.status(200).json({
+      success: true,
+      recordingNumber: currentSession.recordingNumber,
+    });
   } catch (error) {
+    console.error("Error stopping session:", error);
     return res.status(500).json({ error: "Failed to stop session" });
   }
 };
@@ -68,32 +81,36 @@ export const handleParticipantLeft: RequestHandler = async (
   try {
     const { meetingName, leftUserName } = req.body;
 
-    const session = await prisma.recordingSession.findUnique({
-      where: { meetingName },
+    const currentSession = await prisma.recordingSession.findFirst({
+      where: {
+        meetingName,
+        isRecording: true,
+        status: "active",
+      },
+      orderBy: { recordingNumber: "desc" },
     });
 
-    if (!session) {
-      console.log(`⚠️ No active session found for: ${meetingName}`);
-      return res.status(404).json({ error: "Session not found" });
-    }
-
-    if (!session.isRecording) {
-      console.log(`⚠️ Session not recording: ${meetingName}`);
-      return res.status(200).json({ message: "Not recording" });
+    if (!currentSession) {
+      console.log(`⚠️ No active recording session found for: ${meetingName}`);
+      return res.status(404).json({ error: "No active recording session" });
     }
 
     await prisma.recordingSession.update({
-      where: { meetingName },
+      where: { id: currentSession.id },
       data: {
         isRecording: false,
         status: "interrupted",
       },
     });
 
+    console.log(
+      `✅ Marked recording ${currentSession.recordingNumber} as interrupted`
+    );
+
     return res.status(200).json({
       success: true,
       message: "Recording marked for deletion",
-      recordingNumber: session.recordingNumber,
+      recordingNumber: currentSession.recordingNumber,
     });
   } catch (error) {
     console.error("Error handling participant left:", error);

@@ -60,20 +60,24 @@ model Recording {
   participantNumber Int
   s3Key             String
   s3Url             String
-  status            String   @default("processing") // "processing", "completed", "incomplete"
+  recordingStartTime DateTime  
+  status            String   @default("processing")
   createdAt         DateTime @default(now())
 
   @@index([meetingName, recordingNumber])
+  @@index([meetingName, recordingStartTime])
 }
 
 model RecordingSession {
   id              Int      @id @default(autoincrement())
-  meetingName     String   @unique
+  meetingName     String
   recordingNumber Int
+  recordingStartTime DateTime  
   isRecording     Boolean  @default(false)
   startedAt       DateTime @default(now())
   participantCount Int     @default(0)
   status          String   @default("active") // "active", "interrupted", "completed"
   
+  @@unique([meetingName, recordingNumber])
   @@index([meetingName])
 }

@@ -155,16 +155,12 @@ const s3Client = new S3Client({
 
 const BUCKET_NAME = process.env.S3_BUCKET_NAME || "zurons-store-1";
 
-export const handleZoomWebhook: RequestHandler = async (
-  req: Request,
-  res: Response
-) => {
+export const handleZoomWebhook: RequestHandler = async (req, res) => {
   try {
     const { event, payload } = req.body;
 
     if (event === "endpoint.url_validation") {
       const plainToken = payload?.plainToken;
-
       if (plainToken) {
         const crypto = require("crypto");
         const hash = crypto
@@ -186,53 +182,72 @@ export const handleZoomWebhook: RequestHandler = async (
     const meetingName = payload?.object?.session_name;
     const participantAudioFiles = payload?.object?.participant_audio_files;
 
-    if (!meetingName) {
-      return res.status(400).json({ error: "Session name not found" });
-    }
-
-    if (!participantAudioFiles || participantAudioFiles.length === 0) {
-      return res.status(200).json({ message: "No files to process" });
-    }
-
-    const session = await prisma.recordingSession.findUnique({
-      where: { meetingName },
-    });
-
-    if (session?.status === "interrupted") {
-      await new Promise((resolve) => setTimeout(resolve, 15000));
-      await deleteInterruptedRecording(meetingName);
-
-      await prisma.recordingSession.update({
-        where: { meetingName },
-        data: { status: "deleted" },
-      });
-
-      return res.status(200).json({
-        success: true,
-        message: "Interrupted recording deleted",
-      });
+    if (
+      !meetingName ||
+      !participantAudioFiles ||
+      participantAudioFiles.length === 0
+    ) {
+      return res.status(400).json({ error: "Invalid payload" });
     }
 
     await new Promise((resolve) => setTimeout(resolve, 10000));
 
     const groupedByRecording = new Map<string, any[]>();
-
     for (const file of participantAudioFiles) {
       const recordingStart = file.recording_start;
-
       if (!groupedByRecording.has(recordingStart)) {
         groupedByRecording.set(recordingStart, []);
       }
       groupedByRecording.get(recordingStart)!.push(file);
     }
 
-    const sortedRecordings = Array.from(groupedByRecording.entries()).sort(
-      (a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime()
-    );
+    const allSessions = await prisma.recordingSession.findMany({
+      where: { meetingName },
+      orderBy: { recordingNumber: "asc" },
+    });
 
-    let recordingNumber = await getNextRecordingNumber(meetingName);
+    for (const [recordingStartStr, files] of groupedByRecording.entries()) {
+      const recordingStartTime = new Date(recordingStartStr);
 
-    for (const [recordingStart, files] of sortedRecordings) {
+      const matchingSession = allSessions.find((session) => {
+        const timeDiff = Math.abs(
+          session.recordingStartTime.getTime() - recordingStartTime.getTime()
+        );
+        return timeDiff < 5000;
+      });
+
+      if (!matchingSession) {
+        console.warn(
+          `No matching session found for recording at ${recordingStartStr}`
+        );
+        continue;
+      }
+
+      if (matchingSession.status === "interrupted") {
+        console.log(
+          `Deleting interrupted recording ${matchingSession.recordingNumber}`
+        );
+
+        for (const fileInfo of files) {
+          const externalUrl = fileInfo.external_storage_url;
+          const s3Key = externalUrl.replace(`s3://${BUCKET_NAME}/`, "");
+
+          const deleteCommand = new DeleteObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: s3Key,
+          });
+
+          await s3Client.send(deleteCommand);
+        }
+
+        await prisma.recordingSession.update({
+          where: { id: matchingSession.id },
+          data: { status: "deleted" },
+        });
+
+        continue;
+      }
+
       for (const fileInfo of files) {
         const externalUrl = fileInfo.external_storage_url;
         const s3Key = externalUrl.replace(`s3://${BUCKET_NAME}/`, "");
@@ -240,83 +255,43 @@ export const handleZoomWebhook: RequestHandler = async (
         const participantMatch = s3Key.match(/separate(\d+)/);
         const participantNumber = participantMatch ? participantMatch[1] : "1";
 
-        const newKey = `${meetingName}/recording-${recordingNumber}/participant-${participantNumber}.m4a`;
+        const newKey = `${meetingName}/recording-${matchingSession.recordingNumber}/participant-${participantNumber}.m4a`;
 
         const copyCommand = new CopyObjectCommand({
           Bucket: BUCKET_NAME,
           CopySource: encodeURIComponent(`${BUCKET_NAME}/${s3Key}`),
           Key: newKey,
         });
-
         await s3Client.send(copyCommand);
 
         const deleteCommand = new DeleteObjectCommand({
           Bucket: BUCKET_NAME,
           Key: s3Key,
         });
-
         await s3Client.send(deleteCommand);
 
         await prisma.recording.create({
           data: {
             meetingName,
-            recordingNumber,
+            recordingNumber: matchingSession.recordingNumber,
             participantNumber: parseInt(participantNumber),
+            recordingStartTime: recordingStartTime,
             s3Key: newKey,
             s3Url: `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${newKey}`,
-            createdAt: new Date(),
+            status: "completed",
           },
         });
       }
 
-      recordingNumber++;
+      await prisma.recordingSession.update({
+        where: { id: matchingSession.id },
+        data: { status: "completed" },
+      });
     }
 
     return res.status(200).json({ success: true });
   } catch (error) {
+    console.error("Webhook error:", error);
     return res.status(500).json({ error: "Internal server error" });
   }
-};
-
-const deleteInterruptedRecording = async (meetingName: string) => {
-  try {
-    const listCommand = new ListObjectsV2Command({
-      Bucket: BUCKET_NAME,
-      Prefix: "cmr/",
-    });
-
-    const response = await s3Client.send(listCommand);
-
-    if (!response.Contents || response.Contents.length === 0) {
-      return;
-    }
-
-    const recentFiles = response.Contents.filter((file) => {
-      const fileAge = Date.now() - (file.LastModified?.getTime() || 0);
-      return fileAge < 40 * 1000;
-    });
-
-    for (const file of recentFiles) {
-      if (!file.Key) continue;
-
-      const deleteCommand = new DeleteObjectCommand({
-        Bucket: BUCKET_NAME,
-        Key: file.Key,
-      });
-
-      await s3Client.send(deleteCommand);
-    }
-  } catch (error) {
-    console.error("Error deleting interrupted recording:", error);
-    throw error;
-  }
-};
-
-const getNextRecordingNumber = async (meetingName: string): Promise<number> => {
-  const latestRecording = await prisma.recording.findFirst({
-    where: { meetingName },
-    orderBy: { recordingNumber: "desc" },
-  });
-
-  return latestRecording ? latestRecording.recordingNumber + 1 : 1;
 };
