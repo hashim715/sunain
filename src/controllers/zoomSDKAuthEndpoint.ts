@@ -293,7 +293,7 @@ const deleteInterruptedRecording = async (meetingName: string) => {
 
     const recentFiles = response.Contents.filter((file) => {
       const fileAge = Date.now() - (file.LastModified?.getTime() || 0);
-      return fileAge < 2 * 60 * 1000;
+      return fileAge < 40 * 1000;
     });
 
     for (const file of recentFiles) {
