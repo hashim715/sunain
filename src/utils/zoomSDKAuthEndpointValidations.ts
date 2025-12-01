@@ -4,7 +4,6 @@ import {
   toStringArray,
 } from "./zoomSdkAuthEndpointUtils";
 
-/* CURRIED VALIDATORS */
 export const inNumberArray =
   (allowedNumbers: any) => (property: any, value: any) => {
     if (typeof value === "undefined") return;
@@ -62,6 +61,45 @@ export const isLengthLessThan =
     }
   };
 
+export const isValidPasscode = (property: any, value: any) => {
+  if (typeof value === "undefined") return; // Optional field
+
+  if (typeof value !== "string") {
+    return {
+      property,
+      reason: `Passcode must be a string. Got ${typeof value}`,
+    };
+  }
+
+  const passcodeRegex = /^[a-zA-Z0-9@\-_*]{1,10}$/;
+
+  if (!passcodeRegex.test(value)) {
+    return {
+      property,
+      reason: `Passcode must be 1-10 characters and contain only letters, numbers, @, -, _, or *. Got: ${value}`,
+    };
+  }
+};
+
+export const matchesPattern =
+  (pattern: RegExp, description: string) => (property: any, value: any) => {
+    if (typeof value === "undefined") return;
+
+    if (typeof value !== "string") {
+      return {
+        property,
+        reason: `Value must be a string. Got ${typeof value}`,
+      };
+    }
+
+    if (!pattern.test(value)) {
+      return {
+        property,
+        reason: `Value does not match expected pattern. ${description}. Got: ${value}`,
+      };
+    }
+  };
+
 export const isRequired = (property: any, value: any) => {
   if (typeof value === "undefined") {
     return {
@@ -99,7 +137,6 @@ export const matchesStringArray =
     }
   };
 
-/* VALIDATION RUNNER */
 export const validateRequest = (body: any, validator: any) =>
   Object.keys(validator)
     .flatMap((property) => {

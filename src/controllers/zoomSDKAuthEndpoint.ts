@@ -6,6 +6,7 @@ import {
   isRequired,
   matchesStringArray,
   validateRequest,
+  isValidPasscode,
 } from "../utils/zoomSDKAuthEndpointValidations";
 import dotenv from "dotenv";
 import { KJUR } from "jsrsasign";
@@ -15,7 +16,6 @@ import { internalServerError, badRequestResponse } from "./errors";
 import { prisma } from "../config/postgres";
 import {
   S3Client,
-  ListObjectsV2Command,
   CopyObjectCommand,
   DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
@@ -47,6 +47,7 @@ const validator = {
   videoWebRtcMode: inNumberArray([0, 1]),
   audioCompatibleMode: inNumberArray([0, 1]),
   audioWebRtcMode: inNumberArray([0, 1]),
+  passcode: isValidPasscode,
 };
 
 const coerceRequestBody = (body: any): any => ({
@@ -66,6 +67,8 @@ const coerceRequestBody = (body: any): any => ({
     }),
     {}
   ),
+
+  ...(body.passcode && { passcode: body.passcode.trim() }),
 });
 
 const joinGeoRegions = (geoRegions: any): string | undefined =>
@@ -107,6 +110,7 @@ export const generateZoomSignature: RequestHandler = async (
       videoWebRtcMode,
       audioCompatibleMode,
       audioWebRtcMode,
+      passcode,
     } = requestBody;
 
     const iat = Math.floor(Date.now() / 1000);
@@ -128,6 +132,7 @@ export const generateZoomSignature: RequestHandler = async (
       telemetry_tracking_id: telemetryTrackingId,
       video_webrtc_mode: videoWebRtcMode,
       audio_webrtc_mode: audioWebRtcMode ?? audioCompatibleMode,
+      password: passcode,
     };
 
     const sHeader = JSON.stringify(oHeader);

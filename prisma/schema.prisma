@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
   binaryTargets = ["native", "debian-openssl-1.1.x"]
@@ -19,7 +13,6 @@ model User {
   name String
   username String @unique
   email String @unique
-  google_email String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   token String?
@@ -28,29 +21,47 @@ model User {
   google_refresh_token String?
   google_token_expiry String?
   expiresAt String?
-  phone_number String?
+  phone_number String? @unique
   profile_image String?
   details_added Boolean @default(false)
   date_of_birth String?
   gender String?
   race String?
   area_grown_up String?
-  hear_about_us String?
-  languages String[]
-  languages_rating String[]
+  language String?
   city String?
-  year_in_city Int?
-  language_apply_for String?
   language_dialect String?
   education_level String?
   language_skills String[] @default(["Speaking", "Listening", "Reading", "Writing"])
-  language_proficieny String[]
-  language_use_types String[] @default(["Home and family", "Work and school", "Socially with friends", "Media consumption"])
+  language_proficieny Int[]
   language_use String[]
   quiz_answers String[]
-  meetings_attended Int @default(0)
   user_type String @default("user")
-  channels String[]
+  verification_token String?
+  verification_secret String?
+  verification_token_expiry String?
+  verified Boolean @default(false)
+  adminVerify Boolean @default(false)
+  meetings Meeting[]
+}
+
+model Meeting {
+  id           String    @id @default(uuid())
+  sessionName  String    
+  passcode     String
+  userId       Int       @map("user_id")
+  role         String    @default("participant") 
+  joinedAt     DateTime  @default(now()) @map("joined_at")
+  leftAt       DateTime? @map("left_at")
+  duration     Int?      
+  isActive     Boolean   @default(true) @map("is_active")
+  
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([sessionName])
+  @@index([isActive])
+  @@map("meetings")
 }
 
 model Recording {
@@ -76,7 +87,7 @@ model RecordingSession {
   isRecording     Boolean  @default(false)
   startedAt       DateTime @default(now())
   participantCount Int     @default(0)
-  status          String   @default("active") // "active", "interrupted", "completed"
+  status          String   @default("active") 
   
   @@unique([meetingName, recordingNumber])
   @@index([meetingName])

@@ -101,11 +101,6 @@ export const chatController = async (
 
     socket.on("join-meeting", ({ meetingName, userName, isHost }) => {
       socket.join(meetingName);
-      console.log(
-        `${userName} joined meeting: ${meetingName} as ${
-          isHost ? "Host" : "Participant"
-        }`
-      );
     });
 
     socket.on("recording-started", (data) => {
@@ -117,8 +112,6 @@ export const chatController = async (
     });
 
     socket.on("participant-left-during-recording", (data) => {
-      console.log("Participant left during recording:", data);
-
       socket
         .to(data.meetingName)
         .emit("participant-left-during-recording", data);
@@ -126,7 +119,6 @@ export const chatController = async (
 
     socket.on("leave-meeting", ({ meetingName, userName }) => {
       socket.leave(meetingName);
-      console.log(`${userName} left meeting: ${meetingName}`);
     });
 
     socket.on("disconnect", () => {

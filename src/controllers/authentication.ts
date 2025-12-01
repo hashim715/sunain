@@ -7,6 +7,10 @@ import axios from "axios";
 import { sendTokenCookie } from "../utils/sendTokenCookie";
 import { internalServerError, badRequestResponse } from "./errors";
 import { logger } from "../utils/logger";
+import { generateVerificationCode } from "../utils/getVerificationCode";
+import { twilio_client } from "../utils/twilioClient";
+import { validatePhoneNumber } from "../utils/validatePhoneNumber";
+import crypto from "crypto";
 
 dotenv.config();
 
@@ -80,10 +84,7 @@ export const googleredirectauth: RequestHandler = async (
 
     const user = await prisma.user.findFirst({
       where: {
-        OR: [
-          { email: userInfoResponse.data.emailAddresses[0].value },
-          { google_email: userInfoResponse.data.emailAddresses[0].value },
-        ],
+        OR: [{ email: userInfoResponse.data.emailAddresses[0].value }],
       },
     });
 
@@ -99,13 +100,12 @@ export const googleredirectauth: RequestHandler = async (
 
       await sendTokenCookie(res, user.username);
 
-      return res
-        .status(200)
-        .json({
-          success: true,
-          message: "Logged in successfully",
-          details_added: user.details_added,
-        });
+      return res.status(200).json({
+        success: true,
+        message: "Logged in successfully",
+        details_added: user.details_added,
+        verified: user.verified,
+      });
     }
 
     const uuid = uuidv4();
@@ -123,7 +123,6 @@ export const googleredirectauth: RequestHandler = async (
     await prisma.user.create({
       data: {
         email: userInfoResponse.data.emailAddresses[0].value,
-        google_email: userInfoResponse.data.emailAddresses[0].value,
         name: userInfoResponse.data.names[0].displayName,
         username: username,
         google_login: true,
@@ -135,13 +134,12 @@ export const googleredirectauth: RequestHandler = async (
 
     await sendTokenCookie(res, username);
 
-    return res
-      .status(201)
-      .json({
-        success: true,
-        message: "Logged in successfully",
-        details_added: false,
-      });
+    return res.status(201).json({
+      success: true,
+      message: "Logged in successfully",
+      details_added: false,
+      verified: false,
+    });
   } catch (err) {
     logger.error(`Error in googleredirectauth: ${err}`);
     if (!res.headersSent) {
@@ -262,6 +260,174 @@ export const refreshToken: RequestHandler = async (
     return res.status(200).json({ success: true, user: user });
   } catch (err) {
     logger.error(`Error in refreshing the token: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const verifyPhoneNumberOnLogin: RequestHandler = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const {
+      code,
+    }: {
+      code: string;
+    } = req.body;
+
+    let { phone_number }: { phone_number: string } = req.body;
+
+    if (!code.trim() || !phone_number.trim() || code.length < 6) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid inputs" });
+    }
+
+    if (!validatePhoneNumber(phone_number)) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number that you provided is not valid",
+      });
+    }
+
+    let user = await prisma.user.findFirst({
+      where: { phone_number: phone_number },
+    });
+
+    if (!user) {
+      return res
+        .status(400)
+        .json({ success: false, message: "You are not registered" });
+    }
+
+    const verification_token = crypto
+      .createHash("sha256")
+      .update(code + user.verification_secret)
+      .digest("hex");
+
+    if (user.verification_token !== verification_token) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Code did not match" });
+    }
+
+    if (Date.now() > new Date(user.verification_token_expiry).getTime()) {
+      await prisma.user.update({
+        where: { phone_number: phone_number },
+        data: {
+          verification_secret: null,
+          verification_token: null,
+          verification_token_expiry: null,
+        },
+      });
+      return res.status(400).json({
+        success: false,
+        message: "Your verification token is expired not valid",
+      });
+    }
+
+    await prisma.user.update({
+      where: { phone_number: phone_number },
+      data: {
+        verified: true,
+        verification_secret: null,
+        verification_token: null,
+        verification_token_expiry: null,
+        details_added: user.details_added,
+        adminVerify: user.adminVerify,
+      },
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Verified User successfully" });
+  } catch (err) {
+    logger.error(`Error in verifying the phone number: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const sendVerificationCodeToPhoneNumber: RequestHandler = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    let { phone_number }: { phone_number: string } = req.body;
+
+    if (!phone_number.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid inputs" });
+    }
+
+    if (!validatePhoneNumber(phone_number)) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number that you provided is not valid",
+      });
+    }
+
+    const { verificationToken, token, code } = generateVerificationCode();
+
+    const currentDate = new Date();
+    const next1Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
+
+    let cookietoken = req.cookies.authToken;
+
+    const { username }: { username: string } = jwt_decode(cookietoken);
+
+    const user = await prisma.user.findFirst({ where: { username: username } });
+
+    if (user.verification_token) {
+      return res.status(400).json({
+        success: false,
+        message: "Your phone number is not verified try again after 3 minute",
+      });
+    }
+
+    const checkPhoneNumber = await prisma.user.findFirst({
+      where: { phone_number: phone_number },
+    });
+
+    if (checkPhoneNumber) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number already in use with another account",
+      });
+    }
+
+    const message = await twilio_client.messages.create({
+      body: `Your Sunain code is ${code}`,
+      from: process.env.TWILIO_ACCOUNT_PHONE_NUMBER,
+      to: phone_number,
+    });
+
+    await prisma.user.update({
+      where: { username: username },
+      data: {
+        verification_secret: token,
+        verification_token: verificationToken,
+        verification_token_expiry: next1Minutes.toISOString(),
+        phone_number: phone_number,
+      },
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Message sent successfully" });
+  } catch (err) {
+    console.log(err);
+    logger.error(`Error in sending the verification code: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }
