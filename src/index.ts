@@ -14,6 +14,7 @@ import { ZoomAuthEndpointRouter } from "./routes/zoomAuthEndpointRoutes";
 import { zoomRouter } from "./routes/zoomRoutes";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
+import { recordingQueue } from "./controllers/zoomSDKAuthEndpoint";
 
 dotenv.config();
 
@@ -107,12 +108,36 @@ chatController(app, server);
 
 const start = async (): Promise<void> => {
   try {
+    logger.info("🚀 Starting server...");
+
+    if (process.env.ENV !== "production") {
+      logger.info("🗑️ Clearing all jobs from queue...");
+      await recordingQueue.pause();
+      await recordingQueue.obliterate({ force: true });
+      await recordingQueue.resume();
+      logger.info("✅ Queue cleared and ready");
+    }
+
     server.listen(PORT, (): void => {
       logger.info(`Listening on port ${PORT}`);
     });
   } catch (err) {
     logger.error(err);
+    process.exit(1);
   }
 };
+
+// Handle graceful shutdown
+process.on("SIGTERM", async () => {
+  console.log("⚠️ SIGTERM received, closing queue...");
+  await recordingQueue.close();
+  process.exit(0);
+});
+
+process.on("SIGINT", async () => {
+  console.log("⚠️ SIGINT received, closing queue...");
+  await recordingQueue.close();
+  process.exit(0);
+});
 
 start();

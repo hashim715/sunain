@@ -12,21 +12,16 @@ import dotenv from "dotenv";
 import { KJUR } from "jsrsasign";
 import { Request, Response, NextFunction, RequestHandler } from "express";
 import { logger } from "../utils/logger";
-import { internalServerError, badRequestResponse } from "./errors";
+import { internalServerError } from "./errors";
 import { prisma } from "../config/postgres";
 import {
   S3Client,
   CopyObjectCommand,
   DeleteObjectCommand,
   ListObjectsV2Command,
-  GetObjectCommand,
   HeadObjectCommand,
 } from "@aws-sdk/client-s3";
 import Queue from "bull";
-import { spawn } from "child_process";
-import { createWriteStream, unlinkSync } from "fs";
-import { join } from "path";
-import { Readable } from "stream";
 
 dotenv.config();
 
@@ -168,8 +163,6 @@ const s3Client = new S3Client({
   region: process.env.AWS_REGION || "us-east-2",
 });
 
-const BUCKET_NAME = process.env.S3_BUCKET_NAME || "zurons-store-1";
-
 // ✅ Helper: Parse S3 URL from webhook
 const parseS3Url = (
   externalStorageUrl: string
@@ -259,16 +252,16 @@ const groupFilesInOrder = (
 };
 
 // ✅ Create job queue
-const recordingQueue = new Queue("zoom-recordings", {
+export const recordingQueue = new Queue("zoom-recordings", {
   redis: {
     host: process.env.REDIS_HOST || "localhost",
     port: parseInt(process.env.REDIS_PORT || "6379"),
   },
   defaultJobOptions: {
-    attempts: 20,
+    attempts: 10,
     backoff: {
-      type: "exponential",
-      delay: 60000,
+      type: "fixed",
+      delay: 120000,
     },
     removeOnComplete: 100,
     removeOnFail: 500,
