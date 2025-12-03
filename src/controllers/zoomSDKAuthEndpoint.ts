@@ -500,7 +500,7 @@ const getAllS3FilesForSession = async (
   if (!dateMatch) return [];
 
   const [_, year, month, day] = dateMatch;
-  const prefix = `cmr/byos/${year}/${month}/${day}/${sessionUuid}/`;
+  const prefix = `cmr/byos/${year}/${month}/${day}/${sessionUuid}/cmr_byos/`;
 
   console.log(`🔍 Searching S3 with prefix: ${prefix}`);
 
@@ -683,8 +683,6 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
     if (event !== "session.recording_completed") {
       return res.status(200).json({ message: "Event ignored", event });
     }
-
-    console.log(payload);
 
     const meetingName = payload?.object?.session_name;
     const sessionUuid = payload?.object?.recording_files[0].id;
