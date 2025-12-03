@@ -684,8 +684,10 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
       return res.status(200).json({ message: "Event ignored", event });
     }
 
+    console.log(payload);
+
     const meetingName = payload?.object?.session_name;
-    const sessionUuid = payload?.object?.uuid;
+    const sessionUuid = payload?.object?.recording_files[0].id;
     const participantAudioFiles = payload?.object?.participant_audio_files;
 
     if (
