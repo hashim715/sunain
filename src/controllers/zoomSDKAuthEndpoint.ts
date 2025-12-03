@@ -690,6 +690,8 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
     const sessionUuid = payload?.object?.participant_audio_files[0].id;
     const participantAudioFiles = payload?.object?.participant_audio_files;
 
+    console.log(participantAudioFiles);
+
     if (
       !meetingName ||
       !participantAudioFiles ||
