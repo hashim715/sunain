@@ -64,6 +64,7 @@ export const stopRecordingSession: RequestHandler = async (
       data: {
         isRecording: false,
         status: "completed",
+        recordingEndTime: new Date(),
       },
     });
 
@@ -105,6 +106,7 @@ export const handleParticipantLeft: RequestHandler = async (
       data: {
         isRecording: false,
         status: "interrupted",
+        recordingEndTime: new Date(),
       },
     });
 

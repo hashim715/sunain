@@ -91,7 +91,8 @@ model RecordingSession {
   id              Int      @id @default(autoincrement())
   meetingName     String
   recordingNumber Int
-  recordingStartTime DateTime  
+  recordingStartTime DateTime
+  recordingEndTime   DateTime?  
   isRecording     Boolean  @default(false)
   startedAt       DateTime @default(now())
   participantCount Int     @default(0)

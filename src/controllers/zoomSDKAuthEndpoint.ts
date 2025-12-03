@@ -18,9 +18,14 @@ import {
   S3Client,
   CopyObjectCommand,
   DeleteObjectCommand,
-  HeadObjectCommand,
+  ListObjectsV2Command,
+  GetObjectCommand,
 } from "@aws-sdk/client-s3";
 import Queue from "bull";
+import { spawn } from "child_process";
+import { createWriteStream, unlinkSync } from "fs";
+import { join } from "path";
+import { Readable } from "stream";
 
 dotenv.config();
 
@@ -411,14 +416,11 @@ const BUCKET_NAME = process.env.S3_BUCKET_NAME || "zurons-store-1";
 //   }
 // };
 
-// ✅ Helper function to extract timestamp from S3 filename
 const extractTimestampFromS3Key = (s3Key: string): Date | null => {
-  // Example: cmr/byos/2025/12/03/UUID/cmr_byos/GMT20251203-085910_Recording_separate2.m4a
-  //                                                       ^^^^^^^^^^^^^^
   const match = s3Key.match(/GMT(\d{8})-(\d{6})/);
   if (match) {
-    const dateStr = match[1]; // 20251203
-    const timeStr = match[2]; // 085910
+    const dateStr = match[1];
+    const timeStr = match[2];
 
     const year = dateStr.substring(0, 4);
     const month = dateStr.substring(4, 6);
@@ -432,24 +434,232 @@ const extractTimestampFromS3Key = (s3Key: string): Date | null => {
   return null;
 };
 
-// ✅ Create job queue
+const getAudioDuration = (filePath: string): Promise<number> => {
+  return new Promise((resolve, reject) => {
+    const ffprobe = spawn("ffprobe", [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      filePath,
+    ]);
+
+    let output = "";
+    let errorOutput = "";
+
+    ffprobe.stdout.on("data", (data) => {
+      output += data.toString();
+    });
+
+    ffprobe.stderr.on("data", (data) => {
+      errorOutput += data.toString();
+    });
+
+    ffprobe.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`ffprobe failed: ${errorOutput}`));
+      } else {
+        const duration = parseFloat(output.trim());
+        resolve(duration); // Duration in seconds
+      }
+    });
+
+    ffprobe.on("error", (err) => {
+      reject(err);
+    });
+  });
+};
+
+const downloadFileFromS3 = async (
+  s3Key: string,
+  localPath: string
+): Promise<void> => {
+  const command = new GetObjectCommand({
+    Bucket: BUCKET_NAME,
+    Key: s3Key,
+  });
+
+  const response = await s3Client.send(command);
+  const stream = response.Body as Readable;
+  const writeStream = createWriteStream(localPath);
+
+  return new Promise((resolve, reject) => {
+    stream.pipe(writeStream);
+    writeStream.on("finish", resolve);
+    writeStream.on("error", reject);
+  });
+};
+
+const getAllS3FilesForSession = async (
+  sessionUuid: string,
+  meetingDate: string
+): Promise<string[]> => {
+  const dateMatch = meetingDate.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (!dateMatch) return [];
+
+  const [_, year, month, day] = dateMatch;
+  const prefix = `cmr/byos/${year}/${month}/${day}/${sessionUuid}/`;
+
+  console.log(`🔍 Searching S3 with prefix: ${prefix}`);
+
+  const command = new ListObjectsV2Command({
+    Bucket: BUCKET_NAME,
+    Prefix: prefix,
+  });
+
+  const response = await s3Client.send(command);
+  const files =
+    response.Contents?.map((obj) => obj.Key!).filter((key) =>
+      key.endsWith(".m4a")
+    ) || [];
+
+  console.log(`📦 Found ${files.length} files in S3`);
+  return files;
+};
+
+interface FileMetadata {
+  s3Key: string;
+  timestamp: Date;
+  durationSeconds: number;
+}
+
+const getFileMetadata = async (s3Key: string): Promise<FileMetadata | null> => {
+  const timestamp = extractTimestampFromS3Key(s3Key);
+  if (!timestamp) {
+    console.warn(`⚠️ Could not extract timestamp from: ${s3Key}`);
+    return null;
+  }
+
+  // Download file temporarily to get duration
+  const tempDir = "/tmp";
+  const fileName = s3Key.split("/").pop()!;
+  const localPath = join(tempDir, fileName);
+
+  try {
+    console.log(`⬇️ Downloading ${fileName} to get duration...`);
+    await downloadFileFromS3(s3Key, localPath);
+
+    const durationSeconds = await getAudioDuration(localPath);
+
+    console.log(
+      `✅ ${fileName}: ${timestamp.toISOString()}, duration: ${Math.round(
+        durationSeconds
+      )}s`
+    );
+
+    unlinkSync(localPath);
+
+    return {
+      s3Key,
+      timestamp,
+      durationSeconds,
+    };
+  } catch (error) {
+    console.error(`❌ Error getting metadata for ${s3Key}:`, error);
+
+    try {
+      unlinkSync(localPath);
+    } catch {}
+    return null;
+  }
+};
+
+// ✅ Helper: Match files to sessions using timestamp + duration
+const matchFilesToSession = (
+  filesMetadata: FileMetadata[],
+  session: any,
+  participantCount: number
+): { matched: FileMetadata[]; isComplete: boolean } => {
+  const sessionStart = session.recordingStartTime;
+  const sessionEnd = session.recordingEndTime;
+
+  if (!sessionEnd) {
+    console.warn(
+      `⚠️ Session ${session.recordingNumber} has no end time, cannot match`
+    );
+    return { matched: [], isComplete: false };
+  }
+
+  // Calculate expected session duration (in seconds)
+  const sessionDurationMs = sessionEnd.getTime() - sessionStart.getTime();
+  const sessionDurationSeconds = Math.round(sessionDurationMs / 1000);
+
+  console.log(`📊 Session ${session.recordingNumber}:`);
+  console.log(`   Start: ${sessionStart.toISOString()}`);
+  console.log(`   End: ${sessionEnd.toISOString()}`);
+  console.log(`   Expected duration: ${sessionDurationSeconds}s`);
+
+  const matchedFiles: FileMetadata[] = [];
+
+  // ✅ Tolerances
+  const startToleranceSeconds = 30; // File can start within ±30s of session start
+  const durationToleranceSeconds = 10; // Duration can differ by ±10s
+
+  for (const file of filesMetadata) {
+    // Check 1: Does file start around the session start time?
+    const startDiff = Math.abs(
+      (file.timestamp.getTime() - sessionStart.getTime()) / 1000
+    );
+
+    // Check 2: Does file duration match session duration?
+    const durationDiff = Math.abs(
+      file.durationSeconds - sessionDurationSeconds
+    );
+
+    console.log(`   Checking file: ${file.s3Key.split("/").pop()}`);
+    console.log(`      Start time diff: ${Math.round(startDiff)}s`);
+    console.log(`      Duration: ${Math.round(file.durationSeconds)}s`);
+    console.log(`      Duration diff: ${Math.round(durationDiff)}s`);
+
+    // ✅ Match if BOTH conditions are met:
+    // 1. File starts within tolerance of session start
+    // 2. File duration matches session duration
+    if (
+      startDiff <= startToleranceSeconds &&
+      durationDiff <= durationToleranceSeconds
+    ) {
+      matchedFiles.push(file);
+      console.log(`      ✅ MATCHED!`);
+    } else {
+      console.log(`      ❌ No match`);
+      if (startDiff > startToleranceSeconds) {
+        console.log(`         Reason: Start time too different`);
+      }
+      if (durationDiff > durationToleranceSeconds) {
+        console.log(`         Reason: Duration too different`);
+      }
+    }
+  }
+
+  const isComplete = matchedFiles.length === participantCount;
+
+  console.log(
+    `📊 Result: ${matchedFiles.length}/${participantCount} files matched (${
+      isComplete ? "COMPLETE ✅" : "INCOMPLETE ⚠️"
+    })`
+  );
+
+  return { matched: matchedFiles, isComplete };
+};
+
 const recordingQueue = new Queue("zoom-recordings", {
   redis: {
     host: process.env.REDIS_HOST || "localhost",
     port: parseInt(process.env.REDIS_PORT || "6379"),
   },
   defaultJobOptions: {
-    attempts: 20, // Retry 20 times
+    attempts: 30,
     backoff: {
       type: "exponential",
-      delay: 60000, // Start with 1 minute, doubles each retry
+      delay: 60000,
     },
-    removeOnComplete: 100, // Keep last 100 completed jobs
-    removeOnFail: 500, // Keep last 500 failed jobs
+    removeOnComplete: 100,
+    removeOnFail: 500,
   },
 });
 
-// ✅ Webhook handler - match files to sessions individually
 export const handleZoomWebhook: RequestHandler = async (req, res) => {
   try {
     const { event, payload } = req.body;
@@ -475,6 +685,7 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
     }
 
     const meetingName = payload?.object?.session_name;
+    const sessionUuid = payload?.object?.uuid;
     const participantAudioFiles = payload?.object?.participant_audio_files;
 
     if (
@@ -485,294 +696,209 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
       return res.status(400).json({ message: "Invalid payload" });
     }
 
-    console.log("🔍 WEBHOOK PAYLOAD ANALYSIS:");
-    console.log(`Total files in webhook: ${participantAudioFiles.length}`);
+    console.log("🔍 WEBHOOK RECEIVED");
+    console.log(`   Meeting: ${meetingName}`);
+    console.log(`   Session UUID: ${sessionUuid}`);
 
-    // ✅ Get all sessions from database
+    const firstFile = participantAudioFiles[0];
+    const firstFileUrl = firstFile.external_storage_url;
+    const firstS3Key = firstFileUrl.replace(`s3://${BUCKET_NAME}/`, "");
+    const firstFileTimestamp = extractTimestampFromS3Key(firstS3Key);
+
+    if (!firstFileTimestamp) {
+      return res.status(400).json({ message: "Invalid file format" });
+    }
+
+    const meetingDate = firstFileTimestamp.toISOString().split("T")[0];
+
     const allSessions = await prisma.recordingSession.findMany({
       where: { meetingName },
       orderBy: { recordingNumber: "asc" },
     });
 
-    console.log(
-      `💾 Found ${allSessions.length} sessions in database for ${meetingName}`
-    );
-    allSessions.forEach((session) => {
-      console.log(
-        `  Recording ${
-          session.recordingNumber
-        }: ${session.recordingStartTime.toISOString()} (${session.status})`
-      );
-    });
+    const participantCount = allSessions[0]?.participantCount || 2;
+    const expectedTotalFiles = allSessions.length * participantCount;
 
-    // ✅ Group files by matching them to sessions using S3 filename timestamps
-    const sessionFiles = new Map<number, any[]>(); // recordingNumber -> files
-
-    for (const file of participantAudioFiles) {
-      const externalUrl = file.external_storage_url;
-      const s3Key = externalUrl.replace(`s3://${BUCKET_NAME}/`, "");
-
-      // Extract timestamp from S3 filename (more accurate than recording_start)
-      const fileTimestamp = extractTimestampFromS3Key(s3Key);
-
-      if (!fileTimestamp) {
-        console.warn(`⚠️ Could not extract timestamp from: ${s3Key}`);
-        console.warn(
-          `   Using webhook recording_start: ${file.recording_start}`
-        );
-        // Fallback to webhook timestamp
-        const fallbackTimestamp = new Date(file.recording_start);
-
-        // Try to match with fallback
-        const matchingSession = allSessions.find((session) => {
-          const timeDiff = Math.abs(
-            session.recordingStartTime.getTime() - fallbackTimestamp.getTime()
-          );
-          return timeDiff < 60000; // Within 1 minute
-        });
-
-        if (matchingSession) {
-          if (!sessionFiles.has(matchingSession.recordingNumber)) {
-            sessionFiles.set(matchingSession.recordingNumber, []);
-          }
-          sessionFiles.get(matchingSession.recordingNumber)!.push({
-            ...file,
-            s3Key,
-          });
-        }
-        continue;
-      }
-
-      console.log(`📄 File: ${file.file_name}`);
-      console.log(`   Webhook timestamp: ${file.recording_start}`);
-      console.log(`   S3 filename timestamp: ${fileTimestamp.toISOString()}`);
-
-      // Find matching session based on file timestamp
-      const matchingSession = allSessions.find((session) => {
-        const timeDiff = Math.abs(
-          session.recordingStartTime.getTime() - fileTimestamp.getTime()
-        );
-        return timeDiff < 60000; // Within 1 minute
-      });
-
-      if (!matchingSession) {
-        console.warn(
-          `❌ No session found for file at ${fileTimestamp.toISOString()}`
-        );
-        console.warn(`   File: ${s3Key}`);
-        console.warn(
-          `   Available sessions:`,
-          allSessions.map((s) => ({
-            number: s.recordingNumber,
-            time: s.recordingStartTime.toISOString(),
-          }))
-        );
-        continue;
-      }
-
-      console.log(`✅ Matched to Recording ${matchingSession.recordingNumber}`);
-
-      // Group by session
-      if (!sessionFiles.has(matchingSession.recordingNumber)) {
-        sessionFiles.set(matchingSession.recordingNumber, []);
-      }
-      sessionFiles.get(matchingSession.recordingNumber)!.push({
-        ...file,
-        s3Key,
-      });
-    }
-
-    console.log("📊 Files grouped by session:");
-    for (const [recordingNumber, files] of sessionFiles.entries()) {
-      const session = allSessions.find(
-        (s) => s.recordingNumber === recordingNumber
-      );
-      console.log(
-        `  Recording ${recordingNumber} (${session?.status}): ${files.length} file(s)`
-      );
-      files.forEach((f) => console.log(`    - ${f.file_name} → ${f.s3Key}`));
-    }
-
-    // ✅ Queue a job for each session with its matched files
-    let queuedJobs = 0;
-    for (const [recordingNumber, files] of sessionFiles.entries()) {
-      const session = allSessions.find(
-        (s) => s.recordingNumber === recordingNumber
-      );
-
-      if (!session) {
-        console.warn(
-          `⚠️ Session ${recordingNumber} not found in database, skipping`
-        );
-        continue;
-      }
-
-      await recordingQueue.add(
-        "process-recording",
-        {
-          meetingName,
-          recordingNumber: session.recordingNumber,
-          sessionId: session.id,
-          status: session.status,
-          recordingStartTime: session.recordingStartTime.toISOString(),
-          files,
-        },
-        {
-          jobId: `${meetingName}-recording-${recordingNumber}`, // Prevent duplicates
-          delay: 120000, // Wait 2 minutes before first attempt
-        }
-      );
-
-      console.log(
-        `✅ Queued job for recording ${recordingNumber} with ${files.length} file(s)`
-      );
-      queuedJobs++;
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: `Queued ${queuedJobs} recording(s)`,
-      details: {
-        totalFiles: participantAudioFiles.length,
-        sessionsFound: allSessions.length,
-        jobsQueued: queuedJobs,
+    await recordingQueue.add(
+      "process-meeting",
+      {
+        meetingName,
+        sessionUuid,
+        meetingDate,
+        expectedTotalFiles,
+        participantCount,
+        allSessions: allSessions.map((s) => ({
+          id: s.id,
+          recordingNumber: s.recordingNumber,
+          recordingStartTime: s.recordingStartTime.toISOString(),
+          recordingEndTime: s.recordingEndTime?.toISOString() || null,
+          status: s.status,
+        })),
       },
-    });
+      {
+        jobId: `${meetingName}-${Date.now()}`,
+        delay: 120000,
+      }
+    );
+
+    console.log(`✅ Queued processing job`);
+
+    return res.status(200).json({ success: true });
   } catch (error) {
     console.error("Webhook error:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
 
-// ✅ Process jobs from queue
-recordingQueue.process("process-recording", async (job: any) => {
-  const { meetingName, recordingNumber, sessionId, status, files } = job.data;
+recordingQueue.process("process-meeting", async (job: any) => {
+  const {
+    meetingName,
+    sessionUuid,
+    meetingDate,
+    expectedTotalFiles,
+    participantCount,
+    allSessions,
+  } = job.data;
 
-  console.log(`📥 Processing job ${job.id}`);
-  console.log(`   Meeting: ${meetingName}`);
-  console.log(`   Recording: ${recordingNumber}`);
-  console.log(`   Status: ${status}`);
-  console.log(`   Files: ${files.length}`);
+  console.log(`📥 Processing meeting: ${meetingName}`);
+  console.log(`   Attempt: ${job.attemptsMade + 1}`);
 
-  // Handle interrupted recordings
-  if (status === "interrupted") {
-    console.log(`🗑️ Deleting interrupted recording ${recordingNumber}`);
+  const allS3Files = await getAllS3FilesForSession(sessionUuid, meetingDate);
 
-    for (const fileInfo of files) {
-      const s3Key = fileInfo.s3Key;
+  console.log(`📦 Files in S3: ${allS3Files.length}/${expectedTotalFiles}`);
 
-      try {
-        // ✅ Check if file exists (will throw if not, triggering retry)
-        await s3Client.send(
-          new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key })
-        );
+  if (allS3Files.length < expectedTotalFiles) {
+    throw new Error(
+      `Incomplete: ${allS3Files.length}/${expectedTotalFiles} files ready`
+    );
+  }
 
-        // Delete file
-        await s3Client.send(
-          new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key })
-        );
-        console.log(`✅ Deleted: ${s3Key}`);
-      } catch (error: any) {
-        if (error.name === "NoSuchKey" || error.Code === "NoSuchKey") {
-          console.log(`⏭️ File already deleted or doesn't exist: ${s3Key}`);
-          // Continue - file is already gone
-        } else {
-          throw error; // Re-throw other errors to trigger retry
+  console.log(`✅ All files ready, analyzing durations...`);
+
+  const filesMetadata: FileMetadata[] = [];
+  for (const s3Key of allS3Files) {
+    const metadata = await getFileMetadata(s3Key);
+    if (metadata) {
+      filesMetadata.push(metadata);
+    }
+  }
+
+  console.log(`✅ Got metadata for ${filesMetadata.length} files`);
+
+  const sessionFileMap = new Map<number, FileMetadata[]>();
+
+  for (const sessionData of allSessions) {
+    const session = {
+      ...sessionData,
+      recordingStartTime: new Date(sessionData.recordingStartTime),
+      recordingEndTime: sessionData.recordingEndTime
+        ? new Date(sessionData.recordingEndTime)
+        : null,
+    };
+
+    const { matched, isComplete } = matchFilesToSession(
+      filesMetadata,
+      session,
+      participantCount
+    );
+
+    if (matched.length > 0) {
+      sessionFileMap.set(session.recordingNumber, matched);
+    }
+  }
+
+  console.log(`📊 Matched ${sessionFileMap.size} sessions with files`);
+
+  for (const sessionData of allSessions) {
+    const files = sessionFileMap.get(sessionData.recordingNumber) || [];
+
+    if (files.length === 0) {
+      console.warn(`⚠️ No files for session ${sessionData.recordingNumber}`);
+      continue;
+    }
+
+    if (sessionData.status === "interrupted") {
+      console.log(
+        `🗑️ Deleting interrupted recording ${sessionData.recordingNumber}`
+      );
+
+      for (const file of files) {
+        try {
+          await s3Client.send(
+            new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: file.s3Key })
+          );
+          console.log(`✅ Deleted: ${file.s3Key}`);
+        } catch (error: any) {
+          if (error.name === "NoSuchKey") {
+            console.log(`⏭️ Already deleted: ${file.s3Key}`);
+          } else {
+            throw error;
+          }
         }
       }
+
+      await prisma.recordingSession.update({
+        where: { id: sessionData.id },
+        data: { status: "deleted" },
+      });
+
+      continue;
+    }
+
+    console.log(
+      `📦 Processing session ${sessionData.recordingNumber} (${files.length} files)`
+    );
+
+    for (const file of files) {
+      const participantMatch = file.s3Key.match(/separate(\d+)/);
+      const participantNumber = participantMatch ? participantMatch[1] : "1";
+
+      const newKey = `${meetingName}/recording-${sessionData.recordingNumber}/participant-${participantNumber}.m4a`;
+
+      await s3Client.send(
+        new CopyObjectCommand({
+          Bucket: BUCKET_NAME,
+          CopySource: encodeURIComponent(`${BUCKET_NAME}/${file.s3Key}`),
+          Key: newKey,
+        })
+      );
+
+      await s3Client.send(
+        new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: file.s3Key })
+      );
+
+      await prisma.recording.create({
+        data: {
+          meetingName,
+          recordingNumber: sessionData.recordingNumber,
+          participantNumber: parseInt(participantNumber),
+          recordingStartTime: new Date(sessionData.recordingStartTime),
+          s3Key: newKey,
+          s3Url: `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${newKey}`,
+          status: "completed",
+        },
+      });
+
+      console.log(`✅ Processed: ${newKey}`);
     }
 
     await prisma.recordingSession.update({
-      where: { id: sessionId },
-      data: { status: "deleted" },
+      where: { id: sessionData.id },
+      data: { status: "completed" },
     });
-
-    return {
-      status: "deleted",
-      recordingNumber: recordingNumber,
-    };
   }
-
-  // Process normal recordings
-  const processedFiles = [];
-
-  for (const fileInfo of files) {
-    const s3Key = fileInfo.s3Key;
-
-    // ✅ Check if file exists (throws NoSuchKey if not, triggering retry)
-    await s3Client.send(
-      new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key })
-    );
-
-    const participantMatch = s3Key.match(/separate(\d+)/);
-    const participantNumber = participantMatch ? participantMatch[1] : "1";
-
-    const newKey = `${meetingName}/recording-${recordingNumber}/participant-${participantNumber}.m4a`;
-
-    console.log(`📦 Processing: ${s3Key} → ${newKey}`);
-
-    // Copy file
-    await s3Client.send(
-      new CopyObjectCommand({
-        Bucket: BUCKET_NAME,
-        CopySource: encodeURIComponent(`${BUCKET_NAME}/${s3Key}`),
-        Key: newKey,
-      })
-    );
-
-    // Delete original
-    await s3Client.send(
-      new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key })
-    );
-
-    // Save to database
-    await prisma.recording.create({
-      data: {
-        meetingName,
-        recordingNumber: recordingNumber,
-        participantNumber: parseInt(participantNumber),
-        recordingStartTime: new Date(job.data.recordingStartTime),
-        s3Key: newKey,
-        s3Url: `https://${BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${newKey}`,
-        status: "completed",
-      },
-    });
-
-    processedFiles.push(newKey);
-    console.log(`✅ Processed: ${newKey}`);
-  }
-
-  // Mark session as completed
-  await prisma.recordingSession.update({
-    where: { id: sessionId },
-    data: { status: "completed" },
-  });
 
   await prisma.$disconnect();
 
-  return {
-    status: "completed",
-    recordingNumber: recordingNumber,
-    files: processedFiles,
-  };
+  return { success: true, sessionsProcessed: sessionFileMap.size };
 });
 
-// ✅ Event handlers
 recordingQueue.on("completed", (job: any, result: any) => {
   console.log(`✅ Job ${job.id} completed:`, result);
 });
 
 recordingQueue.on("failed", (job: any, err: any) => {
-  console.error(
-    `❌ Job ${job.id} failed after ${job.attemptsMade} attempts:`,
-    err.message
-  );
-
-  // Send alert/notification here
-  if (job.attemptsMade >= 20) {
-    console.error(`🚨 CRITICAL: Job ${job.id} permanently failed`);
-    // Send email/slack notification
-  }
+  console.error(`❌ Job ${job.id} failed:`, err.message);
 });
 
 recordingQueue.on("stalled", (job: any) => {
