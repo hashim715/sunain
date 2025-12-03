@@ -108,7 +108,7 @@ export const addUserDetails: RequestHandler = async (
     }-${Date.now()}.${audioFile.originalname.split(".").pop()}`;
 
     const audioUrl = await uploadToS3({
-      bucket: process.env.AWS_S3_BUCKET!,
+      bucket: process.env.S3_BUCKET_NAME!,
       key: s3Key,
       body: audioFile.buffer,
       contentType: audioFile.mimetype,
