@@ -26,12 +26,14 @@ export const startRecordingSession: RequestHandler = async (req, res) => {
       },
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       recordingNumber: nextRecordingNumber,
     });
   } catch (error) {
-    res.status(500).json({ error: "Failed to start recording" });
+    return res.status(500).json({ message: "Failed to start recording" });
+  } finally {
+    await prisma.$disconnect();
   }
 };
 
@@ -54,7 +56,7 @@ export const stopRecordingSession: RequestHandler = async (
     if (!currentSession) {
       return res
         .status(404)
-        .json({ error: "No active recording session found" });
+        .json({ message: "No active recording session found" });
     }
 
     await prisma.recordingSession.update({
@@ -71,7 +73,9 @@ export const stopRecordingSession: RequestHandler = async (
     });
   } catch (error) {
     console.error("Error stopping session:", error);
-    return res.status(500).json({ error: "Failed to stop session" });
+    return res.status(500).json({ message: "Failed to stop session" });
+  } finally {
+    await prisma.$disconnect();
   }
 };
 
@@ -93,7 +97,7 @@ export const handleParticipantLeft: RequestHandler = async (
 
     if (!currentSession) {
       console.log(`⚠️ No active recording session found for: ${meetingName}`);
-      return res.status(404).json({ error: "No active recording session" });
+      return res.status(404).json({ message: "No active recording session" });
     }
 
     await prisma.recordingSession.update({
@@ -115,7 +119,9 @@ export const handleParticipantLeft: RequestHandler = async (
     });
   } catch (error) {
     console.error("Error handling participant left:", error);
-    return res.status(500).json({ error: "Failed to process" });
+    return res.status(500).json({ message: "Failed to process" });
+  } finally {
+    await prisma.$disconnect();
   }
 };
 
@@ -159,7 +165,9 @@ export const createMeeting: RequestHandler = async (
     return res.status(201).json({ success: true, meeting });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ error: "Failed to create meeting" });
+    return res.status(500).json({ message: "Failed to create meeting" });
+  } finally {
+    await prisma.$disconnect();
   }
 };
 
@@ -184,7 +192,7 @@ export const checkHostStatus: RequestHandler = async (
     });
 
     if (!meeting) {
-      return res.status(404).json({ error: "Meeting not found" });
+      return res.status(404).json({ message: "Meeting not found" });
     }
 
     const isHost = meeting.role === "host";
@@ -192,7 +200,9 @@ export const checkHostStatus: RequestHandler = async (
     return res.status(200).json({ isHost });
   } catch (err) {
     console.error("Error checking host status:", err);
-    return res.status(500).json({ error: "Failed to check host status" });
+    return res.status(500).json({ message: "Failed to check host status" });
+  } finally {
+    await prisma.$disconnect();
   }
 };
 
@@ -217,7 +227,14 @@ export const joinMeeting: RequestHandler = async (
     });
 
     if (!existingMeeting) {
-      return res.status(404).json({ error: "Meeting not found" });
+      return res.status(404).json({ message: "Meeting not found" });
+    }
+
+    if (existingMeeting.passcode !== passcode) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid Passcode try again with valid passcode",
+      });
     }
 
     const meeting = await prisma.meeting.findFirst({
@@ -225,6 +242,10 @@ export const joinMeeting: RequestHandler = async (
     });
 
     if (meeting) {
+      await prisma.meeting.update({
+        where: { id: meeting.id, userId: user.id },
+        data: { isActive: true },
+      });
       return res
         .status(200)
         .json({ message: "Meeting with this session name already exists" });
@@ -246,7 +267,9 @@ export const joinMeeting: RequestHandler = async (
       .json({ success: true, message: "Joined meeting successfully" });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ error: "Failed to join meeting" });
+    return res.status(500).json({ message: "Failed to join meeting" });
+  } finally {
+    await prisma.$disconnect();
   }
 };
 
@@ -271,7 +294,7 @@ export const leaveMeeting: RequestHandler = async (
     });
 
     if (!meeting) {
-      return res.status(404).json({ error: "Meeting not found" });
+      return res.status(404).json({ message: "Meeting not found" });
     }
 
     await prisma.meeting.update({
@@ -284,6 +307,8 @@ export const leaveMeeting: RequestHandler = async (
       .json({ success: true, message: "Left meeting successfully" });
   } catch (err) {
     console.error("Error checking host status:", err);
-    return res.status(500).json({ error: "Failed to check host status" });
+    return res.status(500).json({ message: "Failed to check host status" });
+  } finally {
+    await prisma.$disconnect();
   }
 };

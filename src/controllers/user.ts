@@ -3,6 +3,7 @@ import { internalServerError } from "./errors";
 import jwt_decode from "jwt-decode";
 import { prisma } from "../config/postgres";
 import { logger } from "../utils/logger";
+import { uploadToS3 } from "../utils/uploadToS3";
 
 export const getAuthorizedUrl: RequestHandler = async (
   req: Request,
@@ -15,6 +16,8 @@ export const getAuthorizedUrl: RequestHandler = async (
     if (!res.headersSent) {
       return internalServerError(res);
     }
+  } finally {
+    await prisma.$disconnect();
   }
 };
 
@@ -31,6 +34,8 @@ export const refreshAccessTokenController: RequestHandler = async (
     if (!res.headersSent) {
       return internalServerError(res);
     }
+  } finally {
+    await prisma.$disconnect();
   }
 };
 
@@ -51,6 +56,8 @@ export const addUserDetails: RequestHandler = async (
     backgroundInfo = JSON.parse(req.body.backgroundInfo);
 
     if (
+      !backgroundInfo.firstName ||
+      !backgroundInfo.lastName ||
       !backgroundInfo.dateOfBirth ||
       !backgroundInfo.gender ||
       !backgroundInfo.ethnicity ||
@@ -96,9 +103,21 @@ export const addUserDetails: RequestHandler = async (
 
     const user = await prisma.user.findFirst({ where: { username: username } });
 
+    const s3Key = `audio_samples/${
+      user.id
+    }-${Date.now()}.${audioFile.originalname.split(".").pop()}`;
+
+    const audioUrl = await uploadToS3({
+      bucket: process.env.AWS_S3_BUCKET!,
+      key: s3Key,
+      body: audioFile.buffer,
+      contentType: audioFile.mimetype,
+    });
+
     await prisma.user.update({
       where: { id: user?.id },
       data: {
+        name: `${backgroundInfo.firstName} ${backgroundInfo.lastName}`,
         date_of_birth: backgroundInfo.dateOfBirth,
         gender: backgroundInfo.gender,
         race: backgroundInfo.ethnicity,
@@ -116,6 +135,7 @@ export const addUserDetails: RequestHandler = async (
         language_use: [...backgroundInfo.languageUsage],
         quiz_answers: [...Object.keys(backgroundInfo.quizAnswers)],
         details_added: true,
+        audio_sample_url: audioUrl,
       },
     });
 
@@ -125,6 +145,8 @@ export const addUserDetails: RequestHandler = async (
     if (!res.headersSent) {
       return internalServerError(res);
     }
+  } finally {
+    await prisma.$disconnect();
   }
 };
 

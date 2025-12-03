@@ -94,7 +94,7 @@ export const generateZoomSignature: RequestHandler = async (
     const validationErrors = validateRequest(requestBody, validator);
 
     if (validationErrors.length > 0) {
-      return res.status(400).json({ errors: validationErrors });
+      return res.status(400).json({ message: validationErrors });
     }
 
     const {
@@ -141,12 +141,14 @@ export const generateZoomSignature: RequestHandler = async (
     const secretKey = process.env.ZOOM_VIDEO_SDK_SECRET as string;
     const sdkJWT = KJUR.jws.JWS.sign("HS256", sHeader, sPayload, secretKey);
 
-    return res.json({ signature: sdkJWT });
+    return res.status(200).json({ signature: sdkJWT });
   } catch (err) {
     logger.error(`Error generating Zoom signature: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }
+  } finally {
+    await prisma.$disconnect();
   }
 };
 
@@ -192,7 +194,7 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
       !participantAudioFiles ||
       participantAudioFiles.length === 0
     ) {
-      return res.status(400).json({ error: "Invalid payload" });
+      return res.status(400).json({ message: "Invalid payload" });
     }
 
     await new Promise((resolve) => setTimeout(resolve, 10000));
@@ -297,6 +299,8 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
     return res.status(200).json({ success: true });
   } catch (error) {
     console.error("Webhook error:", error);
-    return res.status(500).json({ error: "Internal server error" });
+    return res.status(500).json({ message: "Internal server error" });
+  } finally {
+    await prisma.$disconnect();
   }
 };

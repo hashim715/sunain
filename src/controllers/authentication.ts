@@ -123,7 +123,6 @@ export const googleredirectauth: RequestHandler = async (
     await prisma.user.create({
       data: {
         email: userInfoResponse.data.emailAddresses[0].value,
-        name: userInfoResponse.data.names[0].displayName,
         username: username,
         google_login: true,
         google_access_token: access_token,
@@ -382,7 +381,7 @@ export const sendVerificationCodeToPhoneNumber: RequestHandler = async (
     const currentDate = new Date();
     const next1Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
 
-    let cookietoken = req.cookies.authToken;
+    const cookietoken = req.cookies.authToken;
 
     const { username }: { username: string } = jwt_decode(cookietoken);
 

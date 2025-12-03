@@ -34,6 +34,9 @@ export const chatController = async (
     return null;
   };
 
+  // Store meeting start times in memory (or database for persistence)
+  const meetingStartTimes = new Map();
+
   io.on("connection", (socket: Socket): void => {
     // socket.on("join-room", async ({ roomId, user }) => {
     //   socket.join(roomId);
@@ -99,8 +102,27 @@ export const chatController = async (
     //   socket.to(roomId).emit("recording-restart", { roomId });
     // });
 
-    socket.on("join-meeting", ({ meetingName, userName, isHost }) => {
-      socket.join(meetingName);
+    socket.on(
+      "join-meeting",
+      ({ meetingName, userName, isHost, timestamp }) => {
+        socket.join(meetingName);
+
+        if (isHost && !meetingStartTimes.has(meetingName)) {
+          meetingStartTimes.set(meetingName, timestamp);
+        }
+
+        const startTime = meetingStartTimes.get(meetingName);
+        if (startTime) {
+          socket.emit("meeting-time-sync", { startTime });
+        }
+      }
+    );
+
+    socket.on("request-meeting-time", ({ meetingName }) => {
+      const startTime = meetingStartTimes.get(meetingName);
+      if (startTime) {
+        socket.emit("meeting-time-sync", { startTime });
+      }
     });
 
     socket.on("recording-started", (data) => {
