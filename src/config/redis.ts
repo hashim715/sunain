@@ -1,11 +1,10 @@
-import { Redis } from "ioredis";
 import dotenv from "dotenv";
 import { createClient, RedisClientType } from "redis";
 
 dotenv.config();
 
 const redispubsubClient: RedisClientType = createClient({
-  url: `redis://${process.env.REDISCLIENTURI}`,
+  url: `redis://${process.env.REDIS_URL}`,
 });
 
 redispubsubClient.on("connect", () => {

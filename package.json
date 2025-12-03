@@ -14,6 +14,7 @@
   "devDependencies": {
     "@types/axios": "^0.14.4",
     "@types/bcrypt": "^5.0.2",
+    "@types/bull": "^3.15.9",
     "@types/connect-timeout": "^0.0.39",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",
@@ -44,6 +45,7 @@
     "agora-access-token": "^2.0.4",
     "axios": "^1.7.7",
     "bcrypt": "^5.1.0",
+    "bull": "^4.16.5",
     "connect-timeout": "^1.9.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
