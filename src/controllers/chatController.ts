@@ -3,103 +3,7 @@ import http from "http";
 import { Server, Socket } from "socket.io";
 import Redis from "ioredis";
 import { createAdapter } from "@socket.io/redis-adapter";
-
-// export const chatController = async (
-//   app: Application,
-//   server: http.Server
-// ): Promise<void> => {
-//   const io = new Server(server, {
-//     cors: { origin: "*", methods: ["GET", "POST"] },
-//   });
-
-//   const pubClient = new Redis(process.env.REDIS_URL);
-//   const subClient = pubClient.duplicate();
-
-//   io.adapter(createAdapter(pubClient, subClient));
-
-//   const redis = new Redis(process.env.REDIS_URL);
-
-//   const getRoomUsers = async (roomId: string) => {
-//     const members = await redis.smembers(`room:${roomId}`);
-//     return members.map((m) => JSON.parse(m));
-//   };
-
-//   const removeUserFromRoom = async (roomId: string, socketId: string) => {
-//     const users = await getRoomUsers(roomId);
-//     const userToRemove = users.find((u) => u.socketId === socketId);
-//     if (userToRemove) {
-//       await redis.srem(`room:${roomId}`, JSON.stringify(userToRemove));
-//       return userToRemove;
-//     }
-//     return null;
-//   };
-
-//   io.on("connection", (socket: Socket): void => {
-//     // socket.on("join-room", async ({ roomId, user }) => {
-//     //   socket.join(roomId);
-
-//     //   const existingUsers = await getRoomUsers(roomId);
-//     //   const alreadyInRoom = existingUsers.some((u) => u.id === user.id);
-//     //   if (!alreadyInRoom) {
-//     //     await redis.sadd(
-//     //       `room:${roomId}`,
-//     //       JSON.stringify({ ...user, socketId: socket.id })
-//     //     );
-//     //   }
-
-//     //   socket.to(roomId).emit("user_joined", { remote_user: user });
-
-//     //   const updatedUsers = await getRoomUsers(roomId);
-//     //   socket.emit("existing-users", {
-//     //     users: updatedUsers.filter((u) => u.id !== user.id),
-//     //   });
-//     // });
-
-//     // socket.on("disconnect", async () => {
-//     //   const roomKeys = await redis.keys("room:*");
-
-//     //   for (const key of roomKeys) {
-//     //     const roomId = key.split(":")[1];
-//     //     const user = await removeUserFromRoom(roomId, socket.id);
-//     //     if (user) {
-//     //       io.to(roomId).emit("user_left", {
-//     //         socketId: socket.id,
-//     //         remote_user: user,
-//     //       });
-//     //     }
-//     //   }
-//     // });
-
-//     // socket.on("user_leave", async ({ remote_user, roomId }) => {
-//     //   await redis.srem(`room:${roomId}`, JSON.stringify(remote_user));
-//     //   socket.to(roomId).emit("user_leave", { remote_user });
-//     // });
-
-//     // socket.on("offer", ({ roomId, offer }) => {
-//     //   socket.to(roomId).emit("offer", offer);
-//     // });
-
-//     // socket.on("answer", ({ roomId, answer }) => {
-//     //   socket.to(roomId).emit("answer", answer);
-//     // });
-
-//     // socket.on("ice-candidate", ({ roomId, candidate }) => {
-//     //   socket.to(roomId).emit("ice-candidate", { candidate });
-//     // });
-
-//     // socket.on("recording-started", ({ roomId }) => {
-//     //   socket.to(roomId).emit("recording-started", { roomId });
-//     // });
-
-//     // socket.on("recording-stop", ({ roomId }) => {
-//     //   socket.to(roomId).emit("recording-stop", { roomId });
-//     // });
-
-//     // socket.on("recording-restart", ({ roomId }) => {
-//     //   socket.to(roomId).emit("recording-restart", { roomId });
-//     // });
-//   });
-// };
+import { prisma } from "../config/postgres";
 
 interface MeetingState {
   topicIndex: number;
@@ -126,6 +30,9 @@ export const chatController = async (
     meetingStartTime: (meetingName: string) =>
       `meeting:${meetingName}:startTime`,
     meetingState: (meetingName: string) => `meeting:${meetingName}:state`,
+    socketUserInfo: (socketId: string) => `socket:${socketId}:userInfo`,
+    meetingRecording: (meetingName: string) =>
+      `meeting:${meetingName}:recording`,
   };
 
   const getMeetingStartTime = async (
@@ -164,16 +71,149 @@ export const chatController = async (
     );
   };
 
+  const setSocketUserInfo = async (
+    socketId: string,
+    userInfo: {
+      meetingName: string;
+      userName: string;
+      isHost: boolean;
+      sessionID: string;
+      jwtToken: string;
+    }
+  ): Promise<void> => {
+    await redis.set(
+      REDIS_KEYS.socketUserInfo(socketId),
+      JSON.stringify(userInfo),
+      "EX",
+      86400
+    );
+  };
+
+  const getSocketUserInfo = async (socketId: string) => {
+    const info = await redis.get(REDIS_KEYS.socketUserInfo(socketId));
+    return info ? JSON.parse(info) : null;
+  };
+
+  const deleteSocketUserInfo = async (socketId: string): Promise<void> => {
+    await redis.del(REDIS_KEYS.socketUserInfo(socketId));
+  };
+
+  const setMeetingRecordingState = async (
+    meetingName: string,
+    isRecording: boolean
+  ): Promise<void> => {
+    await redis.set(
+      REDIS_KEYS.meetingRecording(meetingName),
+      isRecording ? "true" : "false",
+      "EX",
+      86400
+    );
+  };
+
+  const getMeetingRecordingState = async (
+    meetingName: string
+  ): Promise<boolean> => {
+    const state = await redis.get(REDIS_KEYS.meetingRecording(meetingName));
+    return state === "true";
+  };
+
   const deleteMeetingData = async (meetingName: string): Promise<void> => {
     await redis.del(REDIS_KEYS.meetingStartTime(meetingName));
     await redis.del(REDIS_KEYS.meetingState(meetingName));
+    await redis.del(REDIS_KEYS.meetingRecording(meetingName));
+  };
+
+  const stopRecordingViaAPI = async (sessionId: string, jwtToken: string) => {
+    try {
+      const response = await fetch(
+        `https://api.zoom.us/v2/videosdk/sessions/${sessionId}/events`,
+        {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${jwtToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            method: "recording.stop",
+          }),
+        }
+      );
+
+      if (response.status === 202) {
+        console.log(
+          `✅ Recording stop command sent successfully for session: ${sessionId}`
+        );
+        return true;
+      } else {
+        const errorData = await response.text();
+        console.error(
+          `❌ Failed to stop recording: ${response.status}`,
+          errorData
+        );
+        return false;
+      }
+    } catch (error) {
+      console.error("❌ Error stopping recording via API:", error);
+      return false;
+    }
+  };
+
+  const handleParticipantLeft = async (meetingName: string) => {
+    try {
+      const currentSession = await prisma.recordingSession.findFirst({
+        where: {
+          meetingName,
+          isRecording: true,
+          status: "active",
+        },
+        orderBy: { recordingNumber: "desc" },
+      });
+
+      if (!currentSession) {
+        console.log(`⚠️ No active recording session found for: ${meetingName}`);
+        return false;
+      }
+
+      await prisma.recordingSession.update({
+        where: { id: currentSession.id },
+        data: {
+          isRecording: false,
+          status: "interrupted",
+          recordingEndTime: new Date(),
+        },
+      });
+
+      console.log(
+        `✅ Marked recording ${currentSession.recordingNumber} as interrupted`
+      );
+
+      return true;
+    } catch (error) {
+      console.error("❌ Error stopping recording via API:", error);
+      return false;
+    }
   };
 
   io.on("connection", (socket: Socket): void => {
     socket.on(
       "join-meeting",
-      async ({ meetingName, userName, isHost, timestamp }) => {
+      async ({
+        meetingName,
+        userName,
+        isHost,
+        timestamp,
+        sessionID,
+        jwtToken,
+      }) => {
         socket.join(meetingName);
+
+        await setSocketUserInfo(socket.id, {
+          meetingName,
+          userName,
+          isHost,
+          sessionID,
+          jwtToken,
+        });
 
         try {
           const existingStartTime = await getMeetingStartTime(meetingName);
@@ -294,22 +334,20 @@ export const chatController = async (
       }
     );
 
-    socket.on("recording-started", (data) => {
+    socket.on("recording-started", async (data) => {
+      await setMeetingRecordingState(data.meetingName, true);
       socket.to(data.meetingName).emit("recording-started", data);
     });
 
-    socket.on("recording-stopped", (data) => {
+    socket.on("recording-stopped", async (data) => {
+      await setMeetingRecordingState(data.meetingName, false);
       socket.to(data.meetingName).emit("recording-stopped", data);
     });
 
-    socket.on("participant-left-during-recording", (data) => {
-      socket
-        .to(data.meetingName)
-        .emit("participant-left-during-recording", data);
-    });
-
-    socket.on("leave-meeting", async ({ meetingName, userName }) => {
+    socket.on("leave-meeting", async ({ meetingName }) => {
       socket.leave(meetingName);
+
+      await deleteSocketUserInfo(socket.id);
 
       const room = io.sockets.adapter.rooms.get(meetingName);
       if (!room || room.size === 0) {
@@ -318,8 +356,55 @@ export const chatController = async (
       }
     });
 
-    socket.on("disconnect", () => {
-      console.log("User disconnected:", socket.id);
+    socket.on("disconnect", async () => {
+      try {
+        const userInfo = await getSocketUserInfo(socket.id);
+
+        if (userInfo) {
+          const { meetingName, userName, isHost, sessionID, jwtToken } =
+            userInfo;
+
+          if (isHost) {
+            const isRecording = await getMeetingRecordingState(meetingName);
+
+            if (isRecording) {
+              const participant_left = await handleParticipantLeft(meetingName);
+              if (participant_left) {
+                const stopped = await stopRecordingViaAPI(sessionID, jwtToken);
+
+                if (stopped) {
+                  await setMeetingRecordingState(meetingName, false);
+
+                  io.to(meetingName).emit("recording-stopped", {
+                    meetingName,
+                    stoppedBy: userName,
+                    timestamp: new Date().toISOString(),
+                  });
+                }
+              } else {
+                console.log("Failed to update recording session as interupted");
+              }
+            } else {
+              console.log(`ℹ️ No active recording - no action needed`);
+            }
+          } else {
+            console.log(
+              `ℹ️ Participant disconnected - Zoom SDK will handle on host side`
+            );
+          }
+
+          socket.leave(meetingName);
+          await deleteSocketUserInfo(socket.id);
+
+          const room = io.sockets.adapter.rooms.get(meetingName);
+          if (!room || room.size === 0) {
+            await deleteMeetingData(meetingName);
+            console.log(`🗑️ Cleaned up data for empty meeting: ${meetingName}`);
+          }
+        }
+      } catch (error) {
+        console.error("❌ Error handling disconnect:", error);
+      }
     });
   });
 };
