@@ -385,25 +385,25 @@ export const sendVerificationCodeToPhoneNumber: RequestHandler = async (
 
     const { username }: { username: string } = jwt_decode(cookietoken);
 
-    const user = await prisma.user.findFirst({ where: { username: username } });
+    // const user = await prisma.user.findFirst({ where: { username: username } });
 
-    if (user.verification_token) {
-      return res.status(400).json({
-        success: false,
-        message: "Your phone number is not verified try again after 3 minute",
-      });
-    }
+    // if (user.verification_token) {
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: "Your phone number is not verified try again after 3 minute",
+    //   });
+    // }
 
-    const checkPhoneNumber = await prisma.user.findFirst({
-      where: { phone_number: phone_number },
-    });
+    // const checkPhoneNumber = await prisma.user.findFirst({
+    //   where: { phone_number: phone_number },
+    // });
 
-    if (checkPhoneNumber) {
-      return res.status(400).json({
-        success: false,
-        message: "Phone number already in use with another account",
-      });
-    }
+    // if (checkPhoneNumber) {
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: "Phone number already in use with another account",
+    //   });
+    // }
 
     const message = await twilio_client.messages.create({
       body: `Your Sunain code is ${code}`,

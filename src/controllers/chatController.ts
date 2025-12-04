@@ -36,6 +36,8 @@ export const chatController = async (
 
   // Store meeting start times in memory (or database for persistence)
   const meetingStartTimes = new Map();
+  // Store meeting states (topic/subtopic info)
+  const meetingStates = new Map();
 
   io.on("connection", (socket: Socket): void => {
     // socket.on("join-room", async ({ roomId, user }) => {
@@ -109,6 +111,11 @@ export const chatController = async (
 
         if (isHost && !meetingStartTimes.has(meetingName)) {
           meetingStartTimes.set(meetingName, timestamp);
+          meetingStates.set(meetingName, {
+            topicIndex: 0,
+            subtopicIndex: null,
+            completedTopics: [],
+          });
         }
 
         const startTime = meetingStartTimes.get(meetingName);
@@ -118,12 +125,69 @@ export const chatController = async (
       }
     );
 
+    socket.on("request-topic-state", ({ meetingName }) => {
+      const state = meetingStates.get(meetingName);
+      if (state) {
+        socket.emit("current-topic-state", state);
+      }
+    });
+
     socket.on("request-meeting-time", ({ meetingName }) => {
       const startTime = meetingStartTimes.get(meetingName);
       if (startTime) {
         socket.emit("meeting-time-sync", { startTime });
       }
     });
+
+    socket.on(
+      "select-subtopic",
+      ({ meetingName, topicIndex, subtopicIndex, selectedBy }) => {
+        const state = meetingStates.get(meetingName) || {
+          topicIndex: 0,
+          subtopicIndex: null,
+          completedTopics: [],
+        };
+
+        state.topicIndex = topicIndex;
+        state.subtopicIndex = subtopicIndex;
+        meetingStates.set(meetingName, state);
+
+        io.to(meetingName).emit("subtopic-selected", {
+          topicIndex,
+          subtopicIndex,
+          selectedBy,
+        });
+      }
+    );
+
+    socket.on(
+      "change-topic",
+      ({
+        meetingName,
+        topicIndex,
+        subtopicIndex,
+        completedTopics,
+        changedBy,
+      }) => {
+        const state = meetingStates.get(meetingName) || {
+          topicIndex: 0,
+          subtopicIndex: null,
+          completedTopics: [],
+        };
+
+        state.topicIndex = topicIndex;
+        state.subtopicIndex = subtopicIndex;
+        state.completedTopics = completedTopics;
+        meetingStates.set(meetingName, state);
+
+        io.to(meetingName).emit("topic-changed", {
+          topicIndex,
+          subtopicIndex,
+          completedTopics,
+          changedBy,
+        });
+      }
+    );
 
     socket.on("recording-started", (data) => {
       socket.to(data.meetingName).emit("recording-started", data);
