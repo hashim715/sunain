@@ -4,6 +4,9 @@ import { Server, Socket } from "socket.io";
 import Redis from "ioredis";
 import { createAdapter } from "@socket.io/redis-adapter";
 import { prisma } from "../config/postgres";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 interface MeetingState {
   topicIndex: number;
@@ -121,41 +124,6 @@ export const chatController = async (
     await redis.del(REDIS_KEYS.meetingStartTime(meetingName));
     await redis.del(REDIS_KEYS.meetingState(meetingName));
     await redis.del(REDIS_KEYS.meetingRecording(meetingName));
-  };
-
-  const stopRecordingViaAPI = async (sessionId: string, jwtToken: string) => {
-    try {
-      const response = await fetch(
-        `https://api.zoom.us/v2/videosdk/sessions/${sessionId}/events`,
-        {
-          method: "PATCH",
-          headers: {
-            Authorization: `Bearer ${jwtToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            method: "recording.stop",
-          }),
-        }
-      );
-
-      if (response.status === 202) {
-        console.log(
-          `✅ Recording stop command sent successfully for session: ${sessionId}`
-        );
-        return true;
-      } else {
-        const errorData = await response.text();
-        console.error(
-          `❌ Failed to stop recording: ${response.status}`,
-          errorData
-        );
-        return false;
-      }
-    } catch (error) {
-      console.error("❌ Error stopping recording via API:", error);
-      return false;
-    }
   };
 
   const handleParticipantLeft = async (meetingName: string) => {
@@ -344,6 +312,15 @@ export const chatController = async (
       socket.to(data.meetingName).emit("recording-stopped", data);
     });
 
+    socket.on("audio-mute-during-recording", async (data) => {
+      // await setMeetingRecordingState(data.meetingName, false);
+      io.to(data.meetingName).emit("audio-mute-during-recording", data);
+    });
+
+    socket.on("audio-unmute-during-recording", async (data) => {
+      io.to(data.meetingName).emit("audio-unmute-during-recording", data);
+    });
+
     socket.on("leave-meeting", async ({ meetingName }) => {
       socket.leave(meetingName);
 
@@ -370,17 +347,13 @@ export const chatController = async (
             if (isRecording) {
               const participant_left = await handleParticipantLeft(meetingName);
               if (participant_left) {
-                const stopped = await stopRecordingViaAPI(sessionID, jwtToken);
+                const stopped = false;
+                await setMeetingRecordingState(meetingName, false);
 
-                if (stopped) {
-                  await setMeetingRecordingState(meetingName, false);
-
-                  io.to(meetingName).emit("recording-stopped", {
-                    meetingName,
-                    stoppedBy: userName,
-                    timestamp: new Date().toISOString(),
-                  });
-                }
+                io.to(meetingName).emit("host-disconnected-rejoin-required", {
+                  message: "Host disconnected. Please rejoin the meeting.",
+                  meetingName,
+                });
               } else {
                 console.log("Failed to update recording session as interupted");
               }
@@ -397,10 +370,10 @@ export const chatController = async (
           await deleteSocketUserInfo(socket.id);
 
           const room = io.sockets.adapter.rooms.get(meetingName);
-          if (!room || room.size === 0) {
-            await deleteMeetingData(meetingName);
-            console.log(`🗑️ Cleaned up data for empty meeting: ${meetingName}`);
-          }
+          // if (!room || room.size === 0) {
+          //   await deleteMeetingData(meetingName);
+          //   console.log(`🗑️ Cleaned up data for empty meeting: ${meetingName}`);
+          // }
         }
       } catch (error) {
         console.error("❌ Error handling disconnect:", error);
