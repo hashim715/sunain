@@ -63,7 +63,7 @@ export const stopRecordingSession: RequestHandler = async (
       where: { id: currentSession.id },
       data: {
         isRecording: false,
-        status: "completed",
+        status: "incomplete",
         recordingEndTime: new Date(),
       },
     });

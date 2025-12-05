@@ -313,7 +313,6 @@ export const chatController = async (
     });
 
     socket.on("audio-mute-during-recording", async (data) => {
-      // await setMeetingRecordingState(data.meetingName, false);
       io.to(data.meetingName).emit("audio-mute-during-recording", data);
     });
 

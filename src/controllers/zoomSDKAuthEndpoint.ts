@@ -163,7 +163,6 @@ const s3Client = new S3Client({
   region: process.env.AWS_REGION || "us-east-2",
 });
 
-// ✅ Helper: Parse S3 URL from webhook
 const parseS3Url = (
   externalStorageUrl: string
 ): { bucket: string; key: string } | null => {
@@ -179,7 +178,6 @@ const parseS3Url = (
   return null;
 };
 
-// ✅ Helper: Extract timestamp from S3 filename
 const extractTimestampFromS3Key = (s3Key: string): Date | null => {
   const match = s3Key.match(/GMT(\d{8})-(\d{6})/);
 
@@ -200,7 +198,6 @@ const extractTimestampFromS3Key = (s3Key: string): Date | null => {
   return null;
 };
 
-// ✅ Helper: Get all files from S3 directory
 const getAllFilesFromS3Directory = async (
   bucket: string,
   prefix: string
@@ -222,7 +219,6 @@ const getAllFilesFromS3Directory = async (
   return files;
 };
 
-// ✅ NEW: Get all files from multiple S3 directories
 const getAllFilesFromMultipleDirectories = async (
   bucket: string,
   directories: string[]
@@ -237,10 +233,9 @@ const getAllFilesFromMultipleDirectories = async (
   }
 
   console.log(`📦 Total files across all directories: ${allFiles.length}`);
-  return allFiles.sort(); // Sort all files together
+  return allFiles.sort();
 };
 
-// ✅ Helper: Group files in order based on participant count
 const groupFilesInOrder = (
   files: string[],
   participantCount: number
@@ -268,8 +263,7 @@ const groupFilesInOrder = (
   return groups;
 };
 
-// ✅ NEW: Store webhook directories in Redis
-interface WebhookData {
+interface WebhookDirectories {
   meetingName: string;
   bucket: string;
   directories: string[];
@@ -283,44 +277,39 @@ const storeWebhookDirectory = async (
 ): Promise<string[]> => {
   const redisKey = `webhook:directories:${meetingName}`;
 
-  // Get existing data
   const existingData = await recordingQueue.client.get(redisKey);
 
   let directories: string[] = [];
 
   if (existingData) {
-    const parsed: WebhookData = JSON.parse(existingData);
+    const parsed: WebhookDirectories = JSON.parse(existingData);
     directories = parsed.directories;
 
-    // Add new directory if not already present
     if (!directories.includes(directory)) {
       directories.push(directory);
       console.log(`📁 Added new directory for meeting ${meetingName}`);
+    } else {
+      console.log(`⚠️ Directory already tracked, skipping`);
     }
   } else {
     directories = [directory];
     console.log(`📁 First directory for meeting ${meetingName}`);
   }
 
-  // Store updated data (expire after 24 hours)
-  const data: WebhookData = {
+  const data: WebhookDirectories = {
     meetingName,
     bucket,
     directories,
     lastUpdated: Date.now(),
   };
 
-  await recordingQueue.client.setex(redisKey, 86400, JSON.stringify(data));
+  await recordingQueue.client.setex(redisKey, 172800, JSON.stringify(data));
 
   console.log(`💾 Stored ${directories.length} directories for ${meetingName}`);
-  directories.forEach((dir, i) => {
-    console.log(`   ${i + 1}. ${dir}`);
-  });
 
   return directories;
 };
 
-// ✅ Create job queue
 export const recordingQueue = new Queue("zoom-recordings", {
   redis: {
     host: process.env.REDIS_HOST || "localhost",
@@ -337,7 +326,6 @@ export const recordingQueue = new Queue("zoom-recordings", {
   },
 });
 
-// ✅ Webhook handler
 export const handleZoomWebhook: RequestHandler = async (req, res) => {
   try {
     const { event, payload } = req.body;
@@ -377,7 +365,6 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
     console.log(`   Meeting: ${meetingName}`);
     console.log(`   Files reported: ${participantAudioFiles.length}`);
 
-    // ✅ Get S3 location from first file
     const firstFile = participantAudioFiles[0];
     const parsed = parseS3Url(firstFile.external_storage_url);
 
@@ -393,34 +380,47 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
 
     console.log(`📁 S3 Directory: ${parsed.bucket}/${s3Directory}`);
 
-    // ✅ Store this directory with the meeting
     const allDirectories = await storeWebhookDirectory(
       meetingName,
       parsed.bucket,
       s3Directory
     );
 
-    // Get all sessions from database
-    const allSessions = await prisma.recordingSession.findMany({
-      where: { meetingName },
+    const pendingSessions = await prisma.recordingSession.findMany({
+      where: {
+        meetingName,
+        status: {
+          in: ["incomplete", "interrupted"],
+        },
+      },
       orderBy: { recordingNumber: "asc" },
     });
 
-    if (allSessions.length === 0) {
-      console.error("❌ No sessions found in database");
-      return res.status(404).json({ message: "No sessions found" });
+    if (pendingSessions.length === 0) {
+      console.log("✅ No pending sessions - all recordings already processed");
+      return res.status(200).json({
+        message: "No pending sessions to process",
+      });
     }
 
-    console.log(`💾 Found ${allSessions.length} sessions in database`);
+    console.log(
+      `💾 Found ${pendingSessions.length} pending sessions in database`
+    );
+    pendingSessions.forEach((session) => {
+      console.log(`   - Session ${session.recordingNumber}: ${session.status}`);
+    });
 
-    const participantCount = allSessions[0]?.participantCount || 2;
-    const expectedTotalFiles = allSessions.length * participantCount;
+    const participantCount = pendingSessions[0]?.participantCount || 2;
+
+    const activeSessions = pendingSessions.filter(
+      (s) => s.status === "incomplete"
+    );
+    const expectedTotalFiles = activeSessions.length * participantCount;
 
     console.log(
-      `📊 Expected: ${expectedTotalFiles} files (${allSessions.length} sessions × ${participantCount} participants)`
+      `📊 Expected: ${expectedTotalFiles} files (${activeSessions.length} incomplete sessions × ${participantCount} participants)`
     );
 
-    // ✅ Remove old job for this meeting if exists
     const existingJobs = await recordingQueue.getJobs([
       "waiting",
       "delayed",
@@ -434,21 +434,12 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
       }
     }
 
-    // ✅ Queue NEW processing job with ALL directories
     await recordingQueue.add(
       "process-meeting",
       {
         meetingName,
         bucket: parsed.bucket,
-        directories: allDirectories, // ← Pass ALL directories
-        participantCount,
-        expectedTotalFiles,
-        allSessions: allSessions.map((s) => ({
-          id: s.id,
-          recordingNumber: s.recordingNumber,
-          status: s.status,
-          recordingStartTime: s.recordingStartTime.toISOString(),
-        })),
+        directories: allDirectories,
       },
       {
         jobId: `${meetingName}-${Date.now()}`,
@@ -463,6 +454,8 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Processing queued",
+      pendingSessions: pendingSessions.length,
+      directories: allDirectories.length,
     });
   } catch (error) {
     console.error("Webhook error:", error);
@@ -470,16 +463,8 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
   }
 };
 
-// ✅ Process jobs from queue
 recordingQueue.process("process-meeting", async (job: any) => {
-  const {
-    meetingName,
-    bucket,
-    directories, // ← Now receives multiple directories
-    participantCount,
-    expectedTotalFiles,
-    allSessions,
-  } = job.data;
+  const { meetingName, bucket, directories } = job.data;
 
   console.log(`📥 Processing meeting: ${meetingName}`);
   console.log(`   Attempt: ${job.attemptsMade + 1}`);
@@ -488,7 +473,50 @@ recordingQueue.process("process-meeting", async (job: any) => {
     console.log(`      ${i + 1}. ${dir}`);
   });
 
-  // ✅ Get files from ALL directories
+  const pendingSessions = await prisma.recordingSession.findMany({
+    where: {
+      meetingName,
+      status: {
+        in: ["incomplete", "interrupted"],
+      },
+    },
+    orderBy: { recordingNumber: "asc" },
+  });
+
+  if (pendingSessions.length === 0) {
+    console.log("✅ No pending sessions found - all already processed");
+
+    await recordingQueue.client.del(`webhook:directories:${meetingName}`);
+
+    return {
+      success: true,
+      message: "All sessions already processed",
+      sessionsProcessed: 0,
+      sessionsDeleted: 0,
+    };
+  }
+
+  console.log(`💾 Found ${pendingSessions.length} pending sessions`);
+  pendingSessions.forEach((session) => {
+    console.log(`   - Session ${session.recordingNumber}: ${session.status}`);
+  });
+
+  const participantCount = pendingSessions[0]?.participantCount || 2;
+
+  const incompleteSessions = pendingSessions.filter(
+    (s) => s.status === "incomplete"
+  );
+  const expectedTotalFiles = incompleteSessions.length * participantCount;
+
+  console.log(
+    `📊 Expected: ${expectedTotalFiles} files (${incompleteSessions.length} incomplete sessions × ${participantCount} participants)`
+  );
+  console.log(
+    `   Interrupted sessions to delete: ${
+      pendingSessions.length - incompleteSessions.length
+    }`
+  );
+
   const allFiles = await getAllFilesFromMultipleDirectories(
     bucket,
     directories
@@ -496,7 +524,6 @@ recordingQueue.process("process-meeting", async (job: any) => {
 
   console.log(`📦 Files in S3: ${allFiles.length}/${expectedTotalFiles}`);
 
-  // ✅ Wait for all files to be uploaded
   if (allFiles.length < expectedTotalFiles) {
     const missing = expectedTotalFiles - allFiles.length;
     console.log(`⏳ Waiting for ${missing} more file(s)...`);
@@ -507,52 +534,42 @@ recordingQueue.process("process-meeting", async (job: any) => {
 
   console.log(`✅ All ${expectedTotalFiles} files are ready!`);
 
-  // ✅ Group files in order
   const fileGroups = groupFilesInOrder(allFiles, participantCount);
 
-  if (fileGroups.length !== allSessions.length) {
-    console.warn(
-      `⚠️ File group count (${fileGroups.length}) doesn't match session count (${allSessions.length})`
-    );
-  }
+  let processedCount = 0;
+  let deletedCount = 0;
 
-  // ✅ Process each session
-  for (let i = 0; i < allSessions.length; i++) {
-    const session = allSessions[i];
+  for (let i = 0; i < pendingSessions.length; i++) {
+    const session = pendingSessions[i];
     const files = fileGroups[i] || [];
-
-    if (files.length === 0) {
-      console.warn(`⚠️ No files for session ${session.recordingNumber}`);
-      continue;
-    }
 
     console.log(
       `📦 Processing session ${session.recordingNumber} (${session.status})`
     );
-    console.log(`   Files: ${files.length}`);
 
-    // ✅ Handle interrupted recordings - DELETE
     if (session.status === "interrupted") {
       console.log(
         `🗑️ Deleting interrupted recording ${session.recordingNumber}`
       );
 
-      for (const s3Key of files) {
-        try {
-          await s3Client.send(
-            new HeadObjectCommand({ Bucket: bucket, Key: s3Key })
-          );
+      if (files.length > 0) {
+        for (const s3Key of files) {
+          try {
+            await s3Client.send(
+              new HeadObjectCommand({ Bucket: bucket, Key: s3Key })
+            );
 
-          await s3Client.send(
-            new DeleteObjectCommand({ Bucket: bucket, Key: s3Key })
-          );
+            await s3Client.send(
+              new DeleteObjectCommand({ Bucket: bucket, Key: s3Key })
+            );
 
-          console.log(`✅ Deleted: ${s3Key.split("/").pop()}`);
-        } catch (error: any) {
-          if (error.name === "NoSuchKey" || error.Code === "NoSuchKey") {
-            console.log(`⏭️ Already deleted: ${s3Key.split("/").pop()}`);
-          } else {
-            throw error;
+            console.log(`✅ Deleted: ${s3Key.split("/").pop()}`);
+          } catch (error: any) {
+            if (error.name === "NoSuchKey" || error.Code === "NoSuchKey") {
+              console.log(`⏭️ Already deleted: ${s3Key.split("/").pop()}`);
+            } else {
+              throw error;
+            }
           }
         }
       }
@@ -563,61 +580,72 @@ recordingQueue.process("process-meeting", async (job: any) => {
       });
 
       console.log(`✅ Session ${session.recordingNumber} marked as deleted`);
+      deletedCount++;
       continue;
     }
 
-    // ✅ Handle normal recordings - ORGANIZE
-    console.log(`📦 Organizing session ${session.recordingNumber}`);
+    if (session.status === "incomplete") {
+      if (files.length === 0) {
+        console.warn(
+          `⚠️ No files for session ${session.recordingNumber} - skipping`
+        );
+        continue;
+      }
 
-    for (const s3Key of files) {
-      const participantMatch = s3Key.match(/separate(\d+)/);
-      const participantNumber = participantMatch ? participantMatch[1] : "1";
+      console.log(`📦 Organizing session ${session.recordingNumber}`);
+      console.log(`   Files: ${files.length}`);
 
-      const newKey = `${meetingName}/recording-${session.recordingNumber}/participant-${participantNumber}.m4a`;
+      for (const s3Key of files) {
+        const participantMatch = s3Key.match(/separate(\d+)/);
+        const participantNumber = participantMatch ? participantMatch[1] : "1";
 
-      console.log(
-        `   ${s3Key.split("/").pop()} → recording-${
-          session.recordingNumber
-        }/participant-${participantNumber}.m4a`
-      );
+        const newKey = `${meetingName}/recording-${session.recordingNumber}/participant-${participantNumber}.m4a`;
 
-      await s3Client.send(
-        new CopyObjectCommand({
-          Bucket: bucket,
-          CopySource: encodeURIComponent(`${bucket}/${s3Key}`),
-          Key: newKey,
-        })
-      );
+        console.log(
+          `   ${s3Key.split("/").pop()} → recording-${
+            session.recordingNumber
+          }/participant-${participantNumber}.m4a`
+        );
 
-      await s3Client.send(
-        new DeleteObjectCommand({ Bucket: bucket, Key: s3Key })
-      );
+        await s3Client.send(
+          new CopyObjectCommand({
+            Bucket: bucket,
+            CopySource: encodeURIComponent(`${bucket}/${s3Key}`),
+            Key: newKey,
+          })
+        );
 
-      const timestamp = extractTimestampFromS3Key(s3Key);
-      await prisma.recording.create({
-        data: {
-          meetingName,
-          recordingNumber: session.recordingNumber,
-          participantNumber: parseInt(participantNumber),
-          recordingStartTime: timestamp || new Date(session.recordingStartTime),
-          s3Key: newKey,
-          s3Url: `https://${bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${newKey}`,
-          status: "completed",
-        },
+        await s3Client.send(
+          new DeleteObjectCommand({ Bucket: bucket, Key: s3Key })
+        );
+
+        const timestamp = extractTimestampFromS3Key(s3Key);
+        await prisma.recording.create({
+          data: {
+            meetingName,
+            recordingNumber: session.recordingNumber,
+            participantNumber: parseInt(participantNumber),
+            recordingStartTime:
+              timestamp || new Date(session.recordingStartTime),
+            s3Key: newKey,
+            s3Url: `https://${bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${newKey}`,
+            status: "completed",
+          },
+        });
+
+        console.log(`✅ Saved to database`);
+      }
+
+      await prisma.recordingSession.update({
+        where: { id: session.id },
+        data: { status: "completed" },
       });
 
-      console.log(`✅ Saved to database`);
+      console.log(`✅ Session ${session.recordingNumber} completed`);
+      processedCount++;
     }
-
-    await prisma.recordingSession.update({
-      where: { id: session.id },
-      data: { status: "completed" },
-    });
-
-    console.log(`✅ Session ${session.recordingNumber} completed`);
   }
 
-  // ✅ Clean up Redis data
   await recordingQueue.client.del(`webhook:directories:${meetingName}`);
   console.log(`🗑️ Cleaned up webhook directory data`);
 
@@ -625,18 +653,18 @@ recordingQueue.process("process-meeting", async (job: any) => {
 
   return {
     success: true,
-    sessionsProcessed: allSessions.length,
+    sessionsProcessed: processedCount,
+    sessionsDeleted: deletedCount,
     totalFiles: allFiles.length,
     directoriesProcessed: directories.length,
   };
 });
 
-// ✅ Event handlers
 recordingQueue.on("completed", (job: any, result: any) => {
   console.log(`✅ Job ${job.id} completed:`, result);
   console.log(`   Sessions processed: ${result.sessionsProcessed}`);
+  console.log(`   Sessions deleted: ${result.sessionsDeleted}`);
   console.log(`   Total files: ${result.totalFiles}`);
-  console.log(`   Directories processed: ${result.directoriesProcessed}`);
 });
 
 recordingQueue.on("failed", (job: any, err: any) => {
