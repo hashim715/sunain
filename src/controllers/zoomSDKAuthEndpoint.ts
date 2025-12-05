@@ -412,14 +412,21 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
 
     const participantCount = pendingSessions[0]?.participantCount || 2;
 
-    const activeSessions = pendingSessions.filter(
-      (s) => s.status === "incomplete"
-    );
-    const expectedTotalFiles = activeSessions.length * participantCount;
+    const expectedTotalFiles = pendingSessions.length * participantCount;
 
+    const incompleteCount = pendingSessions.filter(
+      (s) => s.status === "incomplete"
+    ).length;
+    const interruptedCount = pendingSessions.filter(
+      (s) => s.status === "interrupted"
+    ).length;
+
+    console.log(`📊 Expected: ${expectedTotalFiles} files total`);
+    console.log(`   - ${incompleteCount} incomplete sessions (will be saved)`);
     console.log(
-      `📊 Expected: ${expectedTotalFiles} files (${activeSessions.length} incomplete sessions × ${participantCount} participants)`
+      `   - ${interruptedCount} interrupted sessions (will be deleted)`
     );
+    console.log(`   - ${participantCount} participants per session`);
 
     const existingJobs = await recordingQueue.getJobs([
       "waiting",
@@ -503,18 +510,25 @@ recordingQueue.process("process-meeting", async (job: any) => {
 
   const participantCount = pendingSessions[0]?.participantCount || 2;
 
-  const incompleteSessions = pendingSessions.filter(
-    (s) => s.status === "incomplete"
-  );
-  const expectedTotalFiles = incompleteSessions.length * participantCount;
+  const expectedTotalFiles = pendingSessions.length * participantCount;
 
+  const incompleteCount = pendingSessions.filter(
+    (s) => s.status === "incomplete"
+  ).length;
+  const interruptedCount = pendingSessions.filter(
+    (s) => s.status === "interrupted"
+  ).length;
+
+  console.log(`📊 Expected: ${expectedTotalFiles} files total`);
   console.log(
-    `📊 Expected: ${expectedTotalFiles} files (${incompleteSessions.length} incomplete sessions × ${participantCount} participants)`
+    `   - ${incompleteCount} incomplete sessions × ${participantCount} = ${
+      incompleteCount * participantCount
+    } files to save`
   );
   console.log(
-    `   Interrupted sessions to delete: ${
-      pendingSessions.length - incompleteSessions.length
-    }`
+    `   - ${interruptedCount} interrupted sessions × ${participantCount} = ${
+      interruptedCount * participantCount
+    } files to delete`
   );
 
   const allFiles = await getAllFilesFromMultipleDirectories(
