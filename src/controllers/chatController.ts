@@ -363,6 +363,12 @@ export const chatController = async (
           const { meetingName, userName, isHost, sessionID, jwtToken } =
             userInfo;
 
+          io.to(meetingName).emit("host-disconnected-rejoin-required", {
+            message: "Host disconnected. Please rejoin the meeting.",
+            meetingName,
+            userName: userName,
+          });
+
           if (isHost) {
             const isRecording = await getMeetingRecordingState(meetingName);
 
