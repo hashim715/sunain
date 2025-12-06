@@ -215,10 +215,6 @@ export const chatController = async (
         const MAX_PARTICIPANTS = 2;
         const canJoin = participantCount < MAX_PARTICIPANTS;
 
-        console.log(
-          `📊 Meeting "${meetingName}" has ${participantCount}/${MAX_PARTICIPANTS} participants`
-        );
-
         callback({
           success: true,
           participantCount,
@@ -379,6 +375,7 @@ export const chatController = async (
                 io.to(meetingName).emit("host-disconnected-rejoin-required", {
                   message: "Host disconnected. Please rejoin the meeting.",
                   meetingName,
+                  userName: userName,
                 });
               } else {
                 console.log("Failed to update recording session as interupted");
