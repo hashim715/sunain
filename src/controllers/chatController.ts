@@ -204,6 +204,7 @@ export const chatController = async (
           if (startTime) {
             socket.emit("meeting-time-sync", { startTime });
           }
+          socket.to(meetingName).emit("refresh-participants", { meetingName });
         } catch (error) {
           console.error("❌ Error in join-meeting:", error);
         }
