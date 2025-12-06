@@ -207,6 +207,33 @@ export const chatController = async (
       }
     );
 
+    socket.on("check-can-join", async ({ meetingName }, callback) => {
+      try {
+        const room = io.sockets.adapter.rooms.get(meetingName);
+        const participantCount = room ? room.size : 0;
+
+        const MAX_PARTICIPANTS = 2;
+        const canJoin = participantCount < MAX_PARTICIPANTS;
+
+        console.log(
+          `📊 Meeting "${meetingName}" has ${participantCount}/${MAX_PARTICIPANTS} participants`
+        );
+
+        callback({
+          success: true,
+          participantCount,
+          maxParticipants: MAX_PARTICIPANTS,
+          canJoin,
+        });
+      } catch (error) {
+        console.error("Error checking participant count:", error);
+        callback({
+          success: false,
+          error: "Failed to check participant count",
+        });
+      }
+    });
+
     socket.on("request-topic-state", async ({ meetingName }) => {
       try {
         const state = await getMeetingState(meetingName);
