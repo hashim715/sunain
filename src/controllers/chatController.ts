@@ -174,6 +174,7 @@ export const chatController = async (
         sessionID,
         jwtToken,
         zoomUserId,
+        isReconnect,
       }) => {
         socket.join(meetingName);
 
@@ -185,6 +186,17 @@ export const chatController = async (
           jwtToken,
           zoomUserId,
         });
+
+        if (isReconnect) {
+          console.log(`🔄 ${userName} reconnected to ${meetingName}`);
+
+          // ✅ Notify others to clear manual removal flag for this user
+          io.to(meetingName).emit("participant-reconnected", {
+            zoomUserId,
+            userName,
+            isHost,
+          });
+        }
 
         try {
           const existingStartTime = await getMeetingStartTime(meetingName);
@@ -204,7 +216,7 @@ export const chatController = async (
           if (startTime) {
             socket.emit("meeting-time-sync", { startTime });
           }
-          socket.to(meetingName).emit("refresh-participants", { meetingName });
+          // socket.to(meetingName).emit("refresh-participants", { meetingName });
         } catch (error) {
           console.error("❌ Error in join-meeting:", error);
         }
