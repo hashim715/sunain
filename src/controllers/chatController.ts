@@ -190,8 +190,7 @@ export const chatController = async (
         if (isReconnect) {
           console.log(`🔄 ${userName} reconnected to ${meetingName}`);
 
-          // ✅ Notify others to clear manual removal flag for this user
-          io.to(meetingName).emit("participant-reconnected", {
+          io.to(meetingName).emit("refresh-participants", {
             zoomUserId,
             userName,
             isHost,
