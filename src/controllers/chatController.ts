@@ -82,6 +82,7 @@ export const chatController = async (
       isHost: boolean;
       sessionID: string;
       jwtToken: string;
+      zoomUserId: string;
     }
   ): Promise<void> => {
     await redis.set(
@@ -172,6 +173,7 @@ export const chatController = async (
         timestamp,
         sessionID,
         jwtToken,
+        zoomUserId,
       }) => {
         socket.join(meetingName);
 
@@ -181,6 +183,7 @@ export const chatController = async (
           isHost,
           sessionID,
           jwtToken,
+          zoomUserId,
         });
 
         try {
@@ -360,13 +363,20 @@ export const chatController = async (
         const userInfo = await getSocketUserInfo(socket.id);
 
         if (userInfo) {
-          const { meetingName, userName, isHost, sessionID, jwtToken } =
-            userInfo;
+          const {
+            meetingName,
+            userName,
+            isHost,
+            sessionID,
+            jwtToken,
+            zoomUserId,
+          } = userInfo;
 
           io.to(meetingName).emit("refresh-participants-required", {
             message: "Host disconnected. Please rejoin the meeting.",
             meetingName,
             userName: userName,
+            zoomUserId: zoomUserId,
           });
 
           if (isHost) {
