@@ -161,9 +161,6 @@ export const chatController = async (
   };
 
   io.on("connection", (socket: Socket): void => {
-    const RECONNECTION_GRACE_PERIOD = 30000;
-    let disconnectTimeout: any = null;
-
     socket.on(
       "join-meeting",
       async ({
