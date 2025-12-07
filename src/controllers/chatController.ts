@@ -391,40 +391,40 @@ export const chatController = async (
             zoomUserId: zoomUserId,
           });
 
-          if (isHost) {
-            const isRecording = await getMeetingRecordingState(meetingName);
+          // if (isHost) {
+          //   const isRecording = await getMeetingRecordingState(meetingName);
 
-            if (isRecording) {
-              const participant_left = await handleParticipantLeft(meetingName);
-              if (participant_left) {
-                const stopped = false;
-                await setMeetingRecordingState(meetingName, false);
+          //   if (isRecording) {
+          //     const participant_left = await handleParticipantLeft(meetingName);
+          //     if (participant_left) {
+          //       const stopped = false;
+          //       await setMeetingRecordingState(meetingName, false);
 
-                io.to(meetingName).emit("host-disconnected-rejoin-required", {
-                  message: "Host disconnected. Please rejoin the meeting.",
-                  meetingName,
-                  userName: userName,
-                });
-              } else {
-                console.log("Failed to update recording session as interupted");
-              }
-            } else {
-              console.log(`ℹ️ No active recording - no action needed`);
-            }
-          } else {
-            console.log(
-              `ℹ️ Participant disconnected - Zoom SDK will handle on host side`
-            );
-          }
+          //       io.to(meetingName).emit("host-disconnected-rejoin-required", {
+          //         message: "Host disconnected. Please rejoin the meeting.",
+          //         meetingName,
+          //         userName: userName,
+          //       });
+          //     } else {
+          //       console.log("Failed to update recording session as interupted");
+          //     }
+          //   } else {
+          //     console.log(`ℹ️ No active recording - no action needed`);
+          //   }
+          // } else {
+          //   console.log(
+          //     `ℹ️ Participant disconnected - Zoom SDK will handle on host side`
+          //   );
+          // }
 
           socket.leave(meetingName);
           await deleteSocketUserInfo(socket.id);
 
           const room = io.sockets.adapter.rooms.get(meetingName);
-          // if (!room || room.size === 0) {
-          //   await deleteMeetingData(meetingName);
-          //   console.log(`🗑️ Cleaned up data for empty meeting: ${meetingName}`);
-          // }
+          if (!room || room.size === 0) {
+            await deleteMeetingData(meetingName);
+            console.log(`🗑️ Cleaned up data for empty meeting: ${meetingName}`);
+          }
         }
       } catch (error) {
         console.error("❌ Error handling disconnect:", error);
