@@ -29,6 +29,10 @@ export const chatController = async (
 
   const redis = new Redis(process.env.REDIS_URL);
 
+  // ✅ Store disconnect timeouts globally, keyed by unique user identifier
+  const disconnectTimeouts = new Map<string, NodeJS.Timeout>();
+  const RECONNECTION_GRACE_PERIOD = 30000;
+
   const REDIS_KEYS = {
     meetingStartTime: (meetingName: string) =>
       `meeting:${meetingName}:startTime`,
@@ -36,6 +40,8 @@ export const chatController = async (
     socketUserInfo: (socketId: string) => `socket:${socketId}:userInfo`,
     meetingRecording: (meetingName: string) =>
       `meeting:${meetingName}:recording`,
+    userSocket: (meetingName: string, zoomUserId: string) =>
+      `user:${meetingName}:${zoomUserId}:socket`,
   };
 
   const getMeetingStartTime = async (
@@ -121,49 +127,43 @@ export const chatController = async (
     return state === "true";
   };
 
+  const setUserSocket = async (
+    meetingName: string,
+    zoomUserId: string,
+    socketId: string
+  ): Promise<void> => {
+    await redis.set(
+      REDIS_KEYS.userSocket(meetingName, zoomUserId),
+      socketId,
+      "EX",
+      86400
+    );
+  };
+
+  const getUserSocket = async (
+    meetingName: string,
+    zoomUserId: string
+  ): Promise<string | null> => {
+    return await redis.get(REDIS_KEYS.userSocket(meetingName, zoomUserId));
+  };
+
+  const deleteUserSocket = async (
+    meetingName: string,
+    zoomUserId: string
+  ): Promise<void> => {
+    await redis.del(REDIS_KEYS.userSocket(meetingName, zoomUserId));
+  };
+
   const deleteMeetingData = async (meetingName: string): Promise<void> => {
     await redis.del(REDIS_KEYS.meetingStartTime(meetingName));
     await redis.del(REDIS_KEYS.meetingState(meetingName));
     await redis.del(REDIS_KEYS.meetingRecording(meetingName));
   };
 
-  const handleParticipantLeft = async (meetingName: string) => {
-    try {
-      const currentSession = await prisma.recordingSession.findFirst({
-        where: {
-          meetingName,
-          isRecording: true,
-          status: "active",
-        },
-        orderBy: { recordingNumber: "desc" },
-      });
-
-      if (!currentSession) {
-        console.log(`⚠️ No active recording session found for: ${meetingName}`);
-        return false;
-      }
-
-      await prisma.recordingSession.update({
-        where: { id: currentSession.id },
-        data: {
-          isRecording: false,
-          status: "interrupted",
-          recordingEndTime: new Date(),
-        },
-      });
-
-      console.log(
-        `✅ Marked recording ${currentSession.recordingNumber} as interrupted`
-      );
-
-      return true;
-    } catch (error) {
-      console.error("❌ Error stopping recording via API:", error);
-      return false;
-    }
-  };
-
   io.on("connection", (socket: Socket): void => {
+    const RECONNECTION_GRACE_PERIOD = 30000;
+    let disconnectTimeout: any = null;
+
     socket.on(
       "join-meeting",
       async ({
@@ -176,7 +176,24 @@ export const chatController = async (
         zoomUserId,
         isReconnect,
       }) => {
+        console.log(
+          `👤 ${userName} joining ${meetingName} (reconnect: ${isReconnect})`
+        );
+
         socket.join(meetingName);
+
+        const userKey = `${meetingName}:${zoomUserId}`;
+
+        if (isReconnect) {
+          const existingTimeout = disconnectTimeouts.get(userKey);
+          if (existingTimeout) {
+            clearTimeout(existingTimeout);
+            disconnectTimeouts.delete(userKey);
+            console.log(`✅ Cleared disconnect timeout for ${userName}`);
+          }
+        }
+
+        await setUserSocket(meetingName, zoomUserId, socket.id);
 
         await setSocketUserInfo(socket.id, {
           meetingName,
@@ -188,8 +205,6 @@ export const chatController = async (
         });
 
         if (isReconnect) {
-          console.log(`🔄 ${userName} reconnected to ${meetingName}`);
-
           io.to(meetingName).emit("refresh-participants", {
             zoomUserId,
             userName,
@@ -220,6 +235,18 @@ export const chatController = async (
         }
       }
     );
+
+    socket.on("restore-recording-state", async (data) => {
+      const { meetingName, userName, zoomUserId } = data;
+      const userKey = `${meetingName}:${zoomUserId}`;
+
+      const existingTimeout = disconnectTimeouts.get(userKey);
+      if (existingTimeout) {
+        clearTimeout(existingTimeout);
+        disconnectTimeouts.delete(userKey);
+        console.log(`✅ Recording state restored for ${userName}`);
+      }
+    });
 
     socket.on("check-can-join", async ({ meetingName }, callback) => {
       try {
@@ -369,60 +396,79 @@ export const chatController = async (
       }
     });
 
-    socket.on("disconnect", async () => {
+    socket.on("disconnect", async (reason) => {
+      console.log(`🔌 Socket disconnected: ${socket.id}, reason: ${reason}`);
+
       try {
         const userInfo = await getSocketUserInfo(socket.id);
 
-        if (userInfo) {
-          const {
-            meetingName,
-            userName,
-            isHost,
-            sessionID,
-            jwtToken,
-            zoomUserId,
-          } = userInfo;
+        if (!userInfo) {
+          console.log("⚠️ No user info found for disconnected socket");
+          return;
+        }
 
-          io.to(meetingName).emit("refresh-participants-required", {
-            message: "Host disconnected. Please rejoin the meeting.",
-            meetingName,
-            userName: userName,
-            zoomUserId: zoomUserId,
-          });
+        const {
+          meetingName,
+          userName,
+          isHost,
+          sessionID,
+          jwtToken,
+          zoomUserId,
+        } = userInfo;
 
-          // if (isHost) {
-          //   const isRecording = await getMeetingRecordingState(meetingName);
+        const userKey = `${meetingName}:${zoomUserId}`;
 
-          //   if (isRecording) {
-          //     const participant_left = await handleParticipantLeft(meetingName);
-          //     if (participant_left) {
-          //       const stopped = false;
-          //       await setMeetingRecordingState(meetingName, false);
+        const currentSocket = await getUserSocket(meetingName, zoomUserId);
 
-          //       io.to(meetingName).emit("host-disconnected-rejoin-required", {
-          //         message: "Host disconnected. Please rejoin the meeting.",
-          //         meetingName,
-          //         userName: userName,
-          //       });
-          //     } else {
-          //       console.log("Failed to update recording session as interupted");
-          //     }
-          //   } else {
-          //     console.log(`ℹ️ No active recording - no action needed`);
-          //   }
-          // } else {
-          //   console.log(
-          //     `ℹ️ Participant disconnected - Zoom SDK will handle on host side`
-          //   );
-          // }
-
-          socket.leave(meetingName);
+        if (currentSocket !== socket.id) {
+          console.log(
+            `⚠️ Socket ${socket.id} is not current for user ${userName}, skipping disconnect handling`
+          );
           await deleteSocketUserInfo(socket.id);
+          return;
+        }
 
-          const room = io.sockets.adapter.rooms.get(meetingName);
-          if (!room || room.size === 0) {
-            await deleteMeetingData(meetingName);
-            console.log(`🗑️ Cleaned up data for empty meeting: ${meetingName}`);
+        const timeout = setTimeout(async () => {
+          console.log(
+            `⏰ Grace period expired for ${userName} - notifying participants`
+          );
+
+          const latestSocket = await getUserSocket(meetingName, zoomUserId);
+          if (latestSocket === socket.id) {
+            io.to(meetingName).emit("refresh-participants-required", {
+              message: "Participant disconnected and didn't reconnect.",
+              meetingName,
+              userName: userName,
+              zoomUserId: zoomUserId,
+            });
+
+            await deleteUserSocket(meetingName, zoomUserId);
+            disconnectTimeouts.delete(userKey);
+          } else {
+            console.log(
+              `✅ ${userName} reconnected with new socket, skipping notification`
+            );
+          }
+        }, RECONNECTION_GRACE_PERIOD);
+
+        disconnectTimeouts.set(userKey, timeout);
+        console.log(
+          `⏱️ Started ${RECONNECTION_GRACE_PERIOD}ms grace period for ${userName}`
+        );
+
+        socket.leave(meetingName);
+        await deleteSocketUserInfo(socket.id);
+
+        const room = io.sockets.adapter.rooms.get(meetingName);
+        if (!room || room.size === 0) {
+          await deleteMeetingData(meetingName);
+          console.log(`🗑️ Cleaned up data for empty meeting: ${meetingName}`);
+
+          for (const [key, timeout] of disconnectTimeouts.entries()) {
+            if (key.startsWith(`${meetingName}:`)) {
+              clearTimeout(timeout);
+              disconnectTimeouts.delete(key);
+            }
           }
         }
       } catch (error) {
