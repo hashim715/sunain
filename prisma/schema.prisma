@@ -42,34 +42,85 @@ model User {
   verification_token_expiry String?
   verified Boolean @default(false)
   adminVerify Boolean @default(false)
-  // Stripe Connect fields
   stripeAccountId       String?  @unique
   stripeOnboardingComplete Boolean @default(false)
   stripeDetailsSubmitted Boolean @default(false)
   stripeChargesEnabled   Boolean @default(false)
   stripePayoutsEnabled   Boolean @default(false)
-  meetings Meeting[]
-  // first audio sample
   audio_sample_url String?
+  
+  meetingParticipations MeetingParticipant[]
+  conversations Conversation[]
+  
+  @@map("users")
 }
 
 model Meeting {
   id           Int @id @default(autoincrement())    
-  sessionName  String    
+  sessionName  String    @unique 
   passcode     String
-  userId       Int       @map("user_id")
-  role         String    @default("participant") 
-  joinedAt     DateTime  @default(now()) @map("joined_at")
-  leftAt       DateTime? @map("left_at")
-  duration     Int?      
-  isActive     Boolean   @default(true) @map("is_active")
+  language     String    
+  createdAt    DateTime  @default(now())
+  endedAt      DateTime?
+  isActive     Boolean   @default(true)
+  participantCount Int @default(0)
   
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
+  participants MeetingParticipant[]
+  conversations Conversation[]
+  
   @@index([sessionName])
   @@index([isActive])
   @@map("meetings")
+}
+
+model MeetingParticipant {
+  id           Int @id @default(autoincrement())
+  meetingId    Int
+  userId       Int
+  role         String    @default("participant") 
+  dialect      String?   
+  joinedAt     DateTime  @default(now())
+  leftAt       DateTime?
+  duration     Int?
+  zoomUserId      String?  // The user_id from Zoom webhook
+  zoomUserKey     String?  // The user_key from Zoom webhook      
+  
+  meeting      Meeting   @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([meetingId, userId]) 
+  @@index([userId])
+  @@index([meetingId])
+  @@map("meeting_participants")
+}
+
+model Conversation {
+  id              Int      @id @default(autoincrement())
+  meetingId       Int
+  userId          Int     
+  recordingId     Int?     // NEW: Link to specific recording file
+
+  participantDialects String[]
+  duration        Int      
+  quality         Int      
+  earnings        Decimal  @db.Decimal(10, 2) 
+  status          String   @default("completed")
+  notes           String?  
+  
+  startTime       DateTime
+  endTime         DateTime
+  createdAt       DateTime @default(now())
+  paidAt          DateTime? 
+  
+  meeting         Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recording       Recording? @relation(fields: [recordingId], references: [id]) // NEW
+  
+  @@index([userId])
+  @@index([meetingId])
+  @@index([status])
+  @@index([recordingId]) 
+  @@map("conversations")
 }
 
 model Recording {
@@ -83,8 +134,18 @@ model Recording {
   status            String   @default("processing")
   createdAt         DateTime @default(now())
 
+  // NEW FIELDS - Add these
+  zoomUserId        String?  // From webhook: participant_audio_files[].user_id
+  zoomUserKey       String?  // From webhook: participant_audio_files[].user_key
+  userId            Int?     // Your database user ID (mapped from zoomUserId)
+
+  // NEW RELATION - Add this
+  conversations     Conversation[]
+
   @@index([meetingName, recordingNumber])
   @@index([meetingName, recordingStartTime])
+  @@index([zoomUserId]) // NEW INDEX
+  @@map("recordings")
 }
 
 model RecordingSession {
@@ -100,4 +161,5 @@ model RecordingSession {
   
   @@unique([meetingName, recordingNumber])
   @@index([meetingName])
+  @@map("recording_sessions")
 }

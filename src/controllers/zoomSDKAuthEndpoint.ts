@@ -269,6 +269,19 @@ interface WebhookDirectories {
   directories: string[];
   lastUpdated: number;
 }
+interface ZoomFileMapping {
+  fileName: string; // "GMT20241208-120000-separate1.m4a"
+  zoomUserId: string; // "16778240"
+  zoomUserKey: string; // "key1"
+  timestamp: string; // Extracted from filename
+  separateNumber: string; // "1" or "2"
+}
+
+interface WebhookZoomFiles {
+  meetingName: string;
+  fileMappings: ZoomFileMapping[];
+  lastUpdated: number;
+}
 
 const storeWebhookDirectory = async (
   meetingName: string,
@@ -308,6 +321,90 @@ const storeWebhookDirectory = async (
   console.log(`💾 Stored ${directories.length} directories for ${meetingName}`);
 
   return directories;
+};
+
+const storeZoomUserMapping = async (
+  meetingName: string,
+  participantAudioFiles: any[]
+): Promise<ZoomFileMapping[]> => {
+  const redisKey = `webhook:zoom:files:${meetingName}`;
+
+  const existingData = await recordingQueue.client.get(redisKey);
+
+  let fileMappings: ZoomFileMapping[] = [];
+
+  const newMappings: ZoomFileMapping[] = participantAudioFiles.map(
+    (file: any) => {
+      const separateMatch =
+        file.file_name?.match(/separate(\d+)/) ||
+        file.external_storage_url?.match(/separate(\d+)/);
+      const separateNumber = separateMatch ? separateMatch[1] : "";
+
+      const timestampMatch =
+        file.file_name?.match(/GMT(\d{8}-\d{6})/) ||
+        file.external_storage_url?.match(/GMT(\d{8}-\d{6})/);
+      const timestamp = timestampMatch ? timestampMatch[1] : "";
+
+      return {
+        fileName: file.file_name || "",
+        zoomUserId: file.user_id,
+        zoomUserKey: file.user_key,
+        timestamp,
+        separateNumber,
+      };
+    }
+  );
+
+  if (existingData) {
+    const parsed: WebhookZoomFiles = JSON.parse(existingData);
+    fileMappings = parsed.fileMappings;
+
+    for (const newMapping of newMappings) {
+      const existingMapping = fileMappings.find(
+        (m) =>
+          m.fileName === newMapping.fileName ||
+          (m.timestamp === newMapping.timestamp &&
+            m.separateNumber === newMapping.separateNumber)
+      );
+
+      if (!existingMapping) {
+        fileMappings.push(newMapping);
+        console.log(
+          `📎 Added file mapping: ${newMapping.fileName} → User ${newMapping.zoomUserId}`
+        );
+      } else {
+        console.log(
+          `⚠️ File mapping already exists: ${newMapping.fileName}, skipping`
+        );
+      }
+    }
+  } else {
+    fileMappings = newMappings;
+    console.log(
+      `📎 First file mappings for meeting ${meetingName} (${fileMappings.length} files)`
+    );
+  }
+
+  const data: WebhookZoomFiles = {
+    meetingName,
+    fileMappings,
+    lastUpdated: Date.now(),
+  };
+
+  await recordingQueue.client.setex(redisKey, 172800, JSON.stringify(data));
+
+  console.log(
+    `💾 Stored ${fileMappings.length} file-to-user mappings for ${meetingName}`
+  );
+  fileMappings.forEach((mapping, index) => {
+    console.log(
+      `   ${index + 1}. ${mapping.fileName} (separate${
+        mapping.separateNumber
+      }) → User ${mapping.zoomUserId}`
+    );
+  });
+
+  return fileMappings;
 };
 
 export const recordingQueue = new Queue("zoom-recordings", {
@@ -384,6 +481,11 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
       meetingName,
       parsed.bucket,
       s3Directory
+    );
+
+    const allZoomUsers = await storeZoomUserMapping(
+      meetingName,
+      participantAudioFiles
     );
 
     const pendingSessions = await prisma.recordingSession.findMany({
@@ -463,10 +565,51 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
       message: "Processing queued",
       pendingSessions: pendingSessions.length,
       directories: allDirectories.length,
+      zoomUsers: allZoomUsers.length,
     });
   } catch (error) {
     console.error("Webhook error:", error);
     return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+const mapZoomUserToDbUser = async (
+  zoomUserId: string,
+  meetingName: string
+): Promise<number | null> => {
+  try {
+    const meeting = await prisma.meeting.findUnique({
+      where: { sessionName: meetingName },
+      include: {
+        participants: {
+          include: {
+            user: true,
+          },
+        },
+      },
+    });
+
+    if (!meeting) {
+      console.error(`Meeting ${meetingName} not found`);
+      return null;
+    }
+
+    const participant = meeting.participants.find(
+      (p) => p.zoomUserId === zoomUserId
+    );
+
+    if (participant) {
+      console.log(
+        `✅ Mapped Zoom User ${zoomUserId} → DB User ${participant.userId}`
+      );
+      return participant.userId;
+    }
+
+    console.warn(`⚠️ Could not map Zoom User ${zoomUserId} to database user`);
+    return null;
+  } catch (error) {
+    console.error("Error mapping Zoom user:", error);
+    return null;
   }
 };
 
@@ -479,6 +622,28 @@ recordingQueue.process("process-meeting", async (job: any) => {
   directories.forEach((dir: string, i: number) => {
     console.log(`      ${i + 1}. ${dir}`);
   });
+
+  const meeting = await prisma.meeting.findUnique({
+    where: { sessionName: meetingName },
+    include: {
+      participants: true,
+    },
+  });
+
+  const dialects = meeting.participants.map((p) => p.dialect || "Unknown");
+
+  const zoomFilesKey = `webhook:zoom:files:${meetingName}`;
+  const zoomFilesData = await recordingQueue.client.get(zoomFilesKey);
+
+  let fileMappings: ZoomFileMapping[] = [];
+
+  if (zoomFilesData) {
+    const parsed: WebhookZoomFiles = JSON.parse(zoomFilesData);
+    fileMappings = parsed.fileMappings;
+    console.log(`📎 Retrieved ${fileMappings.length} file-to-user mappings`);
+  } else {
+    console.warn(`⚠️ No file mappings found for meeting ${meetingName}`);
+  }
 
   const pendingSessions = await prisma.recordingSession.findMany({
     where: {
@@ -613,6 +778,30 @@ recordingQueue.process("process-meeting", async (job: any) => {
         const participantMatch = s3Key.match(/separate(\d+)/);
         const participantNumber = participantMatch ? participantMatch[1] : "1";
 
+        const timestampMatch = s3Key.match(/GMT(\d{8}-\d{6})/);
+        const timestamp = timestampMatch ? timestampMatch[1] : "";
+
+        const matchedMapping = fileMappings.find(
+          (mapping) =>
+            mapping.timestamp === timestamp &&
+            mapping.separateNumber === participantNumber
+        );
+
+        let zoomUserId: string | null = null;
+        let zoomUserKey: string | null = null;
+
+        if (matchedMapping) {
+          zoomUserId = matchedMapping.zoomUserId;
+          zoomUserKey = matchedMapping.zoomUserKey;
+          console.log(
+            `✅ Matched file: separate${participantNumber} → Zoom User ${zoomUserId}`
+          );
+        } else {
+          console.warn(
+            `⚠️ Could not match file separate${participantNumber} (timestamp: ${timestamp}) to Zoom user`
+          );
+        }
+
         const newKey = `${meetingName}/recording-${session.recordingNumber}/participant-${participantNumber}.m4a`;
 
         console.log(
@@ -633,19 +822,51 @@ recordingQueue.process("process-meeting", async (job: any) => {
           new DeleteObjectCommand({ Bucket: bucket, Key: s3Key })
         );
 
-        const timestamp = extractTimestampFromS3Key(s3Key);
-        await prisma.recording.create({
+        let dbUserId: number | null = null;
+
+        if (zoomUserId) {
+          dbUserId = await mapZoomUserToDbUser(zoomUserId, meetingName);
+        }
+
+        const extractedTimestamp = extractTimestampFromS3Key(s3Key);
+
+        const recording = await prisma.recording.create({
           data: {
             meetingName,
             recordingNumber: session.recordingNumber,
             participantNumber: parseInt(participantNumber),
             recordingStartTime:
-              timestamp || new Date(session.recordingStartTime),
+              extractedTimestamp || new Date(session.recordingStartTime),
             s3Key: newKey,
             s3Url: `https://${bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${newKey}`,
             status: "completed",
+            zoomUserId: zoomUserId,
+            zoomUserKey: zoomUserKey,
+            userId: dbUserId,
           },
         });
+
+        const conversation = await prisma.conversation.create({
+          data: {
+            meetingId: meeting.id,
+            userId: dbUserId,
+            recordingId: recording.id,
+            participantDialects: dialects,
+            duration: 30,
+            quality: Math.floor(Math.random() * (95 - 75 + 1)) + 75,
+            earnings: 35.0,
+            status: "completed",
+            notes: `Conversation recording ${session.recordingNumber}`,
+            startTime: session.recordingStartTime,
+            endTime: session.recordingEndTime || new Date(),
+          },
+        });
+
+        console.log(
+          `✅ Saved recording (ID: ${recording.id}${
+            dbUserId ? `, User: ${dbUserId}` : ""
+          })`
+        );
 
         console.log(`✅ Saved to database`);
       }
@@ -656,12 +877,14 @@ recordingQueue.process("process-meeting", async (job: any) => {
       });
 
       console.log(`✅ Session ${session.recordingNumber} completed`);
+
       processedCount++;
     }
   }
 
   await recordingQueue.client.del(`webhook:directories:${meetingName}`);
-  console.log(`🗑️ Cleaned up webhook directory data`);
+  await recordingQueue.client.del(zoomFilesKey);
+  console.log(`🗑️ Cleaned up webhook data`);
 
   await prisma.$disconnect();
 

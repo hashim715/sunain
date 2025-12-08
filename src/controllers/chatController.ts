@@ -29,7 +29,6 @@ export const chatController = async (
 
   const redis = new Redis(process.env.REDIS_URL);
 
-  // ✅ Store disconnect timeouts globally, keyed by unique user identifier
   const disconnectTimeouts = new Map<string, NodeJS.Timeout>();
   const RECONNECTION_GRACE_PERIOD = 30000;
 
@@ -158,6 +157,68 @@ export const chatController = async (
     await redis.del(REDIS_KEYS.meetingStartTime(meetingName));
     await redis.del(REDIS_KEYS.meetingState(meetingName));
     await redis.del(REDIS_KEYS.meetingRecording(meetingName));
+  };
+
+  const updateMeeting = async (meetingName: string) => {
+    try {
+      const now = new Date();
+
+      await prisma.meeting.update({
+        where: { sessionName: meetingName },
+        data: { isActive: false, endedAt: now },
+      });
+    } catch (err) {
+      console.error("Error updating meeting:", err);
+    }
+  };
+
+  const handleMeetingLeave = async (meetingName: string, userName: string) => {
+    try {
+      const now = new Date();
+
+      const meeting = await prisma.meeting.findUnique({
+        where: { sessionName: meetingName },
+      });
+
+      if (!meeting) {
+        throw new Error("Meeting not found");
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { username: userName },
+      });
+
+      if (!user) {
+        throw new Error("User not found");
+      }
+
+      const durationMs = now.getTime() - meeting.createdAt.getTime();
+      const durationMinutes = Math.floor(durationMs / (1000 * 60));
+
+      await prisma.meetingParticipant.update({
+        where: {
+          meetingId_userId: {
+            meetingId: meeting.id,
+            userId: user.id,
+          },
+        },
+        data: { duration: durationMinutes, leftAt: now },
+      });
+
+      await prisma.meeting.update({
+        where: { sessionName: meetingName },
+        data: {
+          participantCount:
+            meeting.participantCount >= 1 ? meeting.participantCount - 1 : 0,
+        },
+      });
+
+      console.log(
+        `Meeting ${meetingName} ended for participant ${userName}. Duration: ${durationMinutes} minutes.`
+      );
+    } catch (err) {
+      console.error("Error leaving meeting:", err);
+    }
   };
 
   io.on("connection", (socket: Socket): void => {
@@ -381,15 +442,14 @@ export const chatController = async (
       io.to(data.meetingName).emit("audio-unmute-during-recording", data);
     });
 
-    socket.on("leave-meeting", async ({ meetingName }) => {
+    socket.on("leave-meeting", async ({ meetingName, userName }) => {
       socket.leave(meetingName);
-
       await deleteSocketUserInfo(socket.id);
+      await handleMeetingLeave(meetingName, userName);
 
       const room = io.sockets.adapter.rooms.get(meetingName);
       if (!room || room.size === 0) {
-        await deleteMeetingData(meetingName);
-        console.log(`🗑️ Cleaned up data for empty meeting: ${meetingName}`);
+        await updateMeeting(meetingName);
       }
     });
 
@@ -456,11 +516,11 @@ export const chatController = async (
         socket.leave(meetingName);
         await deleteSocketUserInfo(socket.id);
 
+        await handleMeetingLeave(meetingName, userName);
+
         const room = io.sockets.adapter.rooms.get(meetingName);
         if (!room || room.size === 0) {
-          await deleteMeetingData(meetingName);
-          console.log(`🗑️ Cleaned up data for empty meeting: ${meetingName}`);
-
+          await updateMeeting(meetingName);
           for (const [key, timeout] of disconnectTimeouts.entries()) {
             if (key.startsWith(`${meetingName}:`)) {
               clearTimeout(timeout);

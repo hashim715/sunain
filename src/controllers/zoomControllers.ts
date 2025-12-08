@@ -143,8 +143,8 @@ export const createMeeting: RequestHandler = async (
 
     const user = await prisma.user.findFirst({ where: { username: username } });
 
-    const existingMeeting = await prisma.meeting.findFirst({
-      where: { sessionName, userId: user.id },
+    const existingMeeting = await prisma.meeting.findUnique({
+      where: { sessionName: sessionName },
     });
 
     if (existingMeeting) {
@@ -157,10 +157,18 @@ export const createMeeting: RequestHandler = async (
       data: {
         sessionName,
         passcode,
+        isActive: true,
+        language: user.language,
+        participantCount: 1,
+      },
+    });
+
+    await prisma.meetingParticipant.create({
+      data: {
+        meetingId: meeting.id,
         userId: user.id,
         role: "host",
-        isActive: true,
-        joinedAt: new Date(),
+        dialect: user.language_dialect,
       },
     });
 
@@ -185,11 +193,9 @@ export const checkHostStatus: RequestHandler = async (
 
     const user = await prisma.user.findFirst({ where: { username: username } });
 
-    const meeting = await prisma.meeting.findFirst({
+    const meeting = await prisma.meeting.findUnique({
       where: {
-        sessionName,
-        isActive: true,
-        userId: user.id,
+        sessionName: sessionName,
       },
     });
 
@@ -197,7 +203,15 @@ export const checkHostStatus: RequestHandler = async (
       return res.status(404).json({ message: "Meeting not found" });
     }
 
-    const isHost = meeting.role === "host";
+    const meetingParticipant = await prisma.meetingParticipant.findFirst({
+      where: { meetingId: meeting.id, userId: user.id },
+    });
+
+    if (!meetingParticipant) {
+      return res.status(404).json({ message: "Meeting not found" });
+    }
+
+    const isHost = meetingParticipant.role === "host";
 
     return res.status(200).json({ isHost });
   } catch (err) {
@@ -224,12 +238,32 @@ export const joinMeeting: RequestHandler = async (
 
     const user = await prisma.user.findFirst({ where: { username: username } });
 
-    const existingMeeting = await prisma.meeting.findFirst({
+    const existingMeeting = await prisma.meeting.findUnique({
       where: { sessionName: sessionName },
     });
 
     if (!existingMeeting) {
       return res.status(404).json({ message: "Meeting not found" });
+    }
+
+    if (existingMeeting.language !== user.language) {
+      return res
+        .status(404)
+        .json({ message: "Meeting language is different from yours!" });
+    }
+
+    const now = new Date();
+    const durationMs = now.getTime() - existingMeeting.createdAt.getTime();
+    const durationMinutes = Math.floor(durationMs / (1000 * 60));
+
+    if (durationMinutes >= 90) {
+      return res.status(400).json({
+        message: "Meeting exceeds max duration length create a new one!",
+      });
+    }
+
+    if (existingMeeting.participantCount === 2) {
+      return res.status(400).json({ message: "Meeting is full!" });
     }
 
     if (existingMeeting.passcode !== passcode) {
@@ -239,13 +273,13 @@ export const joinMeeting: RequestHandler = async (
       });
     }
 
-    const meeting = await prisma.meeting.findFirst({
-      where: { sessionName: sessionName, userId: user.id },
+    const meetingParticipant = await prisma.meetingParticipant.findFirst({
+      where: { meetingId: existingMeeting.id, userId: user.id },
     });
 
-    if (meeting) {
+    if (meetingParticipant) {
       await prisma.meeting.update({
-        where: { id: meeting.id, userId: user.id },
+        where: { sessionName: sessionName },
         data: { isActive: true },
       });
       return res
@@ -253,15 +287,19 @@ export const joinMeeting: RequestHandler = async (
         .json({ message: "Meeting with this session name already exists" });
     }
 
-    await prisma.meeting.create({
+    await prisma.meetingParticipant.create({
       data: {
-        sessionName: sessionName,
-        passcode,
+        meetingId: existingMeeting.id,
         userId: user.id,
         role: "participant",
-        isActive: true,
         joinedAt: new Date(),
+        dialect: user.language_dialect,
       },
+    });
+
+    await prisma.meeting.update({
+      where: { sessionName: sessionName },
+      data: { participantCount: existingMeeting.participantCount + 1 },
     });
 
     return res
@@ -287,11 +325,9 @@ export const leaveMeeting: RequestHandler = async (
 
     const user = await prisma.user.findFirst({ where: { username: username } });
 
-    const meeting = await prisma.meeting.findFirst({
+    const meeting = await prisma.meeting.findUnique({
       where: {
-        sessionName,
-        isActive: true,
-        userId: user.id,
+        sessionName: sessionName,
       },
     });
 
@@ -299,17 +335,75 @@ export const leaveMeeting: RequestHandler = async (
       return res.status(404).json({ message: "Meeting not found" });
     }
 
-    await prisma.meeting.update({
-      where: { id: meeting.id },
-      data: { isActive: false },
+    await prisma.meetingParticipant.update({
+      where: {
+        meetingId_userId: {
+          meetingId: meeting.id,
+          userId: user.id,
+        },
+      },
+      data: { leftAt: new Date() },
     });
 
     return res
       .status(200)
       .json({ success: true, message: "Left meeting successfully" });
   } catch (err) {
-    console.error("Error checking host status:", err);
-    return res.status(500).json({ message: "Failed to check host status" });
+    console.error("Error leaving meeting:", err);
+    return res.status(500).json({ message: "Failed to leave meeting" });
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const getZoomUserId: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  const { sessionName, zoomUserId, zoomUserKey } = req.body;
+  try {
+    if (!sessionName || !zoomUserId || !zoomUserKey) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    const token = req.cookies.authToken;
+
+    const { username }: { username: string } = jwt_decode(token);
+
+    const user = await prisma.user.findFirst({ where: { username: username } });
+
+    const meeting = await prisma.meeting.findFirst({
+      where: { sessionName: sessionName },
+    });
+
+    if (!meeting) {
+      return res.status(404).json({ message: "Meeting not found" });
+    }
+
+    const meetingParticipant = await prisma.meetingParticipant.findFirst({
+      where: { meetingId: meeting.id, userId: user.id },
+    });
+
+    if (!meetingParticipant) {
+      return res.status(404).json({ message: "Meeting not found" });
+    }
+
+    await prisma.meetingParticipant.update({
+      where: {
+        meetingId_userId: {
+          meetingId: meeting.id,
+          userId: user.id,
+        },
+      },
+      data: { zoomUserId: zoomUserId, zoomUserKey: zoomUserKey },
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Uptated zoom meeting id successfully" });
+  } catch (err) {
+    console.error("Error getting zoom user id:", err);
+    return res.status(500).json({ message: "Failed to get zoom user id" });
   } finally {
     await prisma.$disconnect();
   }
