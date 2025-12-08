@@ -14,7 +14,10 @@ import { ZoomAuthEndpointRouter } from "./routes/zoomAuthEndpointRoutes";
 import { zoomRouter } from "./routes/zoomRoutes";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
-import { recordingQueue } from "./controllers/zoomSDKAuthEndpoint";
+import {
+  recordingQueue,
+  transcriptQueue,
+} from "./controllers/zoomSDKAuthEndpoint";
 
 dotenv.config();
 
@@ -115,6 +118,9 @@ const start = async (): Promise<void> => {
       await recordingQueue.pause();
       await recordingQueue.obliterate({ force: true });
       await recordingQueue.resume();
+      await transcriptQueue.pause();
+      await transcriptQueue.obliterate({ force: true });
+      await transcriptQueue.resume();
       logger.info("✅ Queue cleared and ready");
     }
 

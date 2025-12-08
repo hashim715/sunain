@@ -22,6 +22,7 @@ import {
   HeadObjectCommand,
 } from "@aws-sdk/client-s3";
 import Queue from "bull";
+import axios from "axios";
 
 dotenv.config();
 
@@ -271,8 +272,7 @@ interface WebhookDirectories {
 }
 interface ZoomFileMapping {
   fileName: string; // "GMT20241208-120000-separate1.m4a"
-  zoomUserId: string; // "16778240"
-  zoomUserKey: string; // "key1"
+  username: string; // "16778240"
   timestamp: string; // Extracted from filename
   separateNumber: string; // "1" or "2"
 }
@@ -347,8 +347,7 @@ const storeZoomUserMapping = async (
 
       return {
         fileName: file.file_name || "",
-        zoomUserId: file.user_id,
-        zoomUserKey: file.user_key,
+        username: file.file_name.split("/")[0].replace("Audio only - ", ""),
         timestamp,
         separateNumber,
       };
@@ -362,15 +361,14 @@ const storeZoomUserMapping = async (
     for (const newMapping of newMappings) {
       const existingMapping = fileMappings.find(
         (m) =>
-          m.fileName === newMapping.fileName ||
-          (m.timestamp === newMapping.timestamp &&
-            m.separateNumber === newMapping.separateNumber)
+          m.timestamp === newMapping.timestamp &&
+          m.separateNumber === newMapping.separateNumber
       );
 
       if (!existingMapping) {
         fileMappings.push(newMapping);
         console.log(
-          `📎 Added file mapping: ${newMapping.fileName} → User ${newMapping.zoomUserId}`
+          `📎 Added file mapping: ${newMapping.fileName} → User ${newMapping.username}`
         );
       } else {
         console.log(
@@ -400,7 +398,7 @@ const storeZoomUserMapping = async (
     console.log(
       `   ${index + 1}. ${mapping.fileName} (separate${
         mapping.separateNumber
-      }) → User ${mapping.zoomUserId}`
+      }) → User ${mapping.username}`
     );
   });
 
@@ -420,6 +418,20 @@ export const recordingQueue = new Queue("zoom-recordings", {
     },
     removeOnComplete: 100,
     removeOnFail: 500,
+  },
+});
+
+export const transcriptQueue = new Queue("transcript-processing", {
+  redis: {
+    host: process.env.REDIS_HOST || "localhost",
+    port: parseInt(process.env.REDIS_PORT || "6379"),
+  },
+  defaultJobOptions: {
+    attempts: 3,
+    backoff: { type: "exponential", delay: 300000 },
+    removeOnComplete: 50,
+    removeOnFail: 200,
+    timeout: 1800000,
   },
 });
 
@@ -574,38 +586,23 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
 };
 
 const mapZoomUserToDbUser = async (
-  zoomUserId: string,
-  meetingName: string
+  username: string
 ): Promise<number | null> => {
   try {
-    const meeting = await prisma.meeting.findUnique({
-      where: { sessionName: meetingName },
-      include: {
-        participants: {
-          include: {
-            user: true,
-          },
-        },
-      },
+    const user = await prisma.user.findUnique({
+      where: { username: username },
     });
 
-    if (!meeting) {
-      console.error(`Meeting ${meetingName} not found`);
+    if (!user) {
+      console.error(`User not found`);
       return null;
     }
 
-    const participant = meeting.participants.find(
-      (p) => p.zoomUserId === zoomUserId
-    );
-
-    if (participant) {
-      console.log(
-        `✅ Mapped Zoom User ${zoomUserId} → DB User ${participant.userId}`
-      );
-      return participant.userId;
+    if (user) {
+      return user.id;
     }
 
-    console.warn(`⚠️ Could not map Zoom User ${zoomUserId} to database user`);
+    console.warn(`⚠️ Could not find user with that username: ${username}`);
     return null;
   } catch (error) {
     console.error("Error mapping Zoom user:", error);
@@ -640,7 +637,6 @@ recordingQueue.process("process-meeting", async (job: any) => {
   if (zoomFilesData) {
     const parsed: WebhookZoomFiles = JSON.parse(zoomFilesData);
     fileMappings = parsed.fileMappings;
-    console.log(`📎 Retrieved ${fileMappings.length} file-to-user mappings`);
   } else {
     console.warn(`⚠️ No file mappings found for meeting ${meetingName}`);
   }
@@ -781,24 +777,18 @@ recordingQueue.process("process-meeting", async (job: any) => {
         const timestampMatch = s3Key.match(/GMT(\d{8}-\d{6})/);
         const timestamp = timestampMatch ? timestampMatch[1] : "";
 
-        console.log(timestamp);
-        console.log(timestampMatch);
-        console.log(fileMappings);
-
         const matchedMapping = fileMappings.find(
           (mapping) =>
             mapping.timestamp === timestamp &&
             mapping.separateNumber === participantNumber
         );
 
-        let zoomUserId: string | null = null;
-        let zoomUserKey: string | null = null;
+        let username: string | null = null;
 
         if (matchedMapping) {
-          zoomUserId = matchedMapping.zoomUserId;
-          zoomUserKey = matchedMapping.zoomUserKey;
+          username = matchedMapping.username;
           console.log(
-            `✅ Matched file: separate${participantNumber} → Zoom User ${zoomUserId}`
+            `✅ Matched file: separate${participantNumber} → User ${username}`
           );
         } else {
           console.warn(
@@ -828,8 +818,8 @@ recordingQueue.process("process-meeting", async (job: any) => {
 
         let dbUserId: number | null = null;
 
-        if (zoomUserId) {
-          dbUserId = await mapZoomUserToDbUser(zoomUserId, meetingName);
+        if (username) {
+          dbUserId = await mapZoomUserToDbUser(username);
         }
 
         const extractedTimestamp = extractTimestampFromS3Key(s3Key);
@@ -844,8 +834,6 @@ recordingQueue.process("process-meeting", async (job: any) => {
             s3Key: newKey,
             s3Url: `https://${bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${newKey}`,
             status: "completed",
-            zoomUserId: zoomUserId,
-            zoomUserKey: zoomUserKey,
             userId: dbUserId,
           },
         });
@@ -866,12 +854,6 @@ recordingQueue.process("process-meeting", async (job: any) => {
           },
         });
 
-        console.log(
-          `✅ Saved recording (ID: ${recording.id}${
-            dbUserId ? `, User: ${dbUserId}` : ""
-          })`
-        );
-
         console.log(`✅ Saved to database`);
       }
 
@@ -881,6 +863,23 @@ recordingQueue.process("process-meeting", async (job: any) => {
       });
 
       console.log(`✅ Session ${session.recordingNumber} completed`);
+
+      await transcriptQueue.add(
+        "process-transcripts",
+        {
+          meetingName: meetingName,
+          recordingNumber: session.recordingNumber,
+          sessionId: session.id,
+        },
+        {
+          jobId: `transcript-${meetingName}-${session.recordingNumber}`,
+          priority: 1,
+        }
+      );
+
+      console.log(
+        `🎯 Queued transcript processing for session ${session.recordingNumber}`
+      );
 
       processedCount++;
     }
@@ -920,5 +919,113 @@ recordingQueue.on("failed", (job: any, err: any) => {
 });
 
 recordingQueue.on("stalled", (job: any) => {
+  console.warn(`⚠️ Job ${job.id} stalled`);
+});
+
+transcriptQueue.process("process-transcripts", async (job: any) => {
+  const { meetingName, recordingNumber, sessionId } = job.data;
+
+  console.log(`📥 Processing transcripts: ${meetingName}`);
+  console.log(`📥 Recording Number: recording-${recordingNumber}`);
+  console.log(`   Attempt: ${job.attemptsMade + 1}`);
+
+  const meeting = await prisma.meeting.findUnique({
+    where: { sessionName: meetingName },
+  });
+
+  try {
+    await axios.post("http://localhost:8000/transcribe/", {
+      language: meeting.language,
+      s3_folder_path: `${meetingName}/recording-${recordingNumber}`,
+    });
+  } catch (err) {
+    throw new Error(`error in transcription process for the meeting ${err}`);
+  }
+
+  try {
+    const response = await axios.post(
+      "http://localhost:8001/analyze-quality/",
+      {
+        language: meeting.language,
+        s3_transcript_path: `${meetingName}/recording-${recordingNumber}/transcription.txt`,
+      }
+    );
+
+    console.log(response.data);
+
+    const userIdsByRecordingNumber = await prisma.recording.findMany({
+      where: { meetingName: meetingName, recordingNumber: recordingNumber },
+    });
+
+    userIdsByRecordingNumber.forEach(async (recording) => {
+      const HOURLY_RATE = 10;
+      const SECONDS_PER_HOUR = 3600;
+      const durationInHours =
+        response.data.conversation_duration / SECONDS_PER_HOUR;
+
+      if (recording.participantNumber === 1) {
+        const conversation = await prisma.conversation.findFirst({
+          where: { recordingId: recording.id },
+        });
+
+        if (conversation) {
+          await prisma.conversation.update({
+            where: { id: conversation.id },
+            data: {
+              quality: response.data.speakers.speaker_1.final_score,
+              duration: response.data.conversation_duration,
+              earnings: durationInHours * HOURLY_RATE,
+            },
+          });
+        }
+      } else {
+        const conversation = await prisma.conversation.findFirst({
+          where: { recordingId: recording.id },
+        });
+
+        if (conversation) {
+          await prisma.conversation.update({
+            where: { id: conversation.id },
+            data: {
+              quality: response.data.speakers.speaker_1.final_score,
+              duration: response.data.conversation_duration,
+              earnings: durationInHours * HOURLY_RATE,
+            },
+          });
+        }
+      }
+    });
+  } catch (err) {
+    throw new Error(
+      `error in calculating quality process for the meeting ${err}`
+    );
+  }
+
+  return {
+    success: true,
+    message: "All processes done successfully",
+  };
+});
+
+transcriptQueue.on("completed", (job: any, result: any) => {
+  console.log(`✅ Transcript job ${job.id} completed:`, result);
+});
+
+transcriptQueue.on("failed", (job: any, err: any) => {
+  console.error(
+    `❌ Transcript job ${job.id} failed after ${job.attemptsMade} attempts:`,
+    err.message
+  );
+
+  if (job.attemptsMade >= 3) {
+    console.error(`🚨 CRITICAL: Job ${job.id} permanently failed`);
+  }
+});
+
+transcriptQueue.on("progress", (job: any, progress: number) => {
+  console.log(`⏳ Transcript job ${job.id} progress: ${progress}%`);
+});
+
+transcriptQueue.on("stalled", (job: any) => {
   console.warn(`⚠️ Job ${job.id} stalled`);
 });

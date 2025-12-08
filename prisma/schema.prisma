@@ -81,9 +81,7 @@ model MeetingParticipant {
   dialect      String?   
   joinedAt     DateTime  @default(now())
   leftAt       DateTime?
-  duration     Int?
-  zoomUserId      String?  // The user_id from Zoom webhook
-  zoomUserKey     String?  // The user_key from Zoom webhook      
+  duration     Int?    
   
   meeting      Meeting   @relation(fields: [meetingId], references: [id], onDelete: Cascade)
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -101,8 +99,8 @@ model Conversation {
   recordingId     Int?     // NEW: Link to specific recording file
 
   participantDialects String[]
-  duration        Int      
-  quality         Int      
+  duration        Decimal  @db.Decimal(10, 2)     
+  quality         Decimal  @db.Decimal(10, 2)     
   earnings        Decimal  @db.Decimal(10, 2) 
   status          String   @default("completed")
   notes           String?  
@@ -134,9 +132,6 @@ model Recording {
   status            String   @default("processing")
   createdAt         DateTime @default(now())
 
-  // NEW FIELDS - Add these
-  zoomUserId        String?  // From webhook: participant_audio_files[].user_id
-  zoomUserKey       String?  // From webhook: participant_audio_files[].user_key
   userId            Int?     // Your database user ID (mapped from zoomUserId)
 
   // NEW RELATION - Add this
@@ -144,7 +139,6 @@ model Recording {
 
   @@index([meetingName, recordingNumber])
   @@index([meetingName, recordingStartTime])
-  @@index([zoomUserId]) // NEW INDEX
   @@map("recordings")
 }
 

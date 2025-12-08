@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "conversations" ALTER COLUMN "duration" SET DATA TYPE DECIMAL(65,30),
+ALTER COLUMN "quality" SET DATA TYPE DECIMAL(65,30);

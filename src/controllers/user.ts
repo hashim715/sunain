@@ -184,3 +184,124 @@ export const getUserDetails: RequestHandler = async (
     await prisma.$disconnect();
   }
 };
+
+export const getUserMeetingsMetaData: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const token = req.cookies.authToken;
+
+    if (!token) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    const { username }: { username: string } = jwt_decode(token);
+
+    const user = await prisma.user.findFirst({ where: { username: username } });
+
+    const userMeetingsWithStats = await prisma.meeting.findMany({
+      where: {
+        participants: {
+          some: {
+            userId: user.id,
+          },
+        },
+      },
+      include: {
+        participants: {
+          where: {
+            userId: user.id,
+          },
+          select: {
+            role: true,
+            dialect: true,
+            joinedAt: true,
+            leftAt: true,
+            duration: true,
+          },
+        },
+        conversations: {
+          where: {
+            userId: user.id,
+          },
+          select: {
+            id: true,
+            duration: true,
+            quality: true,
+            earnings: true,
+            status: true,
+            startTime: true,
+            endTime: true,
+            createdAt: true,
+            paidAt: true,
+            notes: true,
+          },
+        },
+        _count: {
+          select: {
+            conversations: {
+              where: {
+                userId: user.id,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    const meetingsWithStats = userMeetingsWithStats.map((meeting) => {
+      const conversations = meeting.conversations;
+
+      const totalDuration = conversations.reduce(
+        (sum: number, conv: any) => sum + parseFloat(conv.duration),
+        0
+      );
+
+      const totalEarnings = conversations.reduce(
+        (sum: number, conv: any) => sum + parseFloat(conv.earnings),
+        0
+      );
+
+      const averageQuality =
+        conversations.length > 0
+          ? conversations.reduce(
+              (sum: number, conv: any) => sum + parseFloat(conv.quality),
+              0
+            ) / conversations.length
+          : 0;
+
+      return {
+        meetingId: meeting.id,
+        sessionName: meeting.sessionName,
+        language: meeting.language,
+        createdAt: meeting.createdAt,
+        endedAt: meeting.endedAt,
+        isActive: meeting.isActive,
+        userRole: meeting.participants[0]?.role,
+        userDialect: meeting.participants[0]?.dialect,
+        conversationCount: conversations.length,
+        totalDuration: totalDuration,
+        totalDurationFormatted: `${Math.ceil(totalDuration / 60)}m`,
+        totalEarnings: totalEarnings.toFixed(2),
+        averageQuality: averageQuality.toFixed(1),
+        conversations: conversations,
+        isPaid: conversations.every((conv) => conv.paidAt !== null),
+      };
+    });
+
+    return res.status(200).json({ success: true, message: meetingsWithStats });
+  } catch (err) {
+    logger.error(`Error in getting meeting metadata: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};

@@ -6,6 +6,7 @@ import {
   getAuthorizedUrl,
   addUserDetails,
   getUserDetails,
+  getUserMeetingsMetaData,
 } from "../controllers/user";
 import multer from "multer";
 
@@ -29,3 +30,7 @@ userRouter
   .post(protect, upload.single("audio_sample"), addUserDetails);
 
 userRouter.route("/getUserDetails").post(protect, getUserDetails);
+
+userRouter
+  .route("/getUserMeetingMetaData")
+  .get(protect, getUserMeetingsMetaData);
