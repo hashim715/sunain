@@ -362,7 +362,7 @@ export const saveZoomUserId: RequestHandler = async (
 ) => {
   const { sessionName, zoomUserId, zoomUserKey } = req.body;
   try {
-    if (!sessionName || !zoomUserId || !zoomUserKey) {
+    if (!sessionName || !zoomUserId) {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
