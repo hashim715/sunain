@@ -7,7 +7,7 @@ import {
   checkHostStatus,
   joinMeeting,
   leaveMeeting,
-  getZoomUserId,
+  saveZoomUserId,
 } from "../controllers/zoomControllers";
 import { protect } from "../middleware/middleware";
 
@@ -22,4 +22,4 @@ zoomRouter.route("/meeting/create").post(protect, createMeeting);
 zoomRouter.route("/meeting/checkHostStatus").post(protect, checkHostStatus);
 zoomRouter.route("/meeting/joinMeeting").post(protect, joinMeeting);
 zoomRouter.route("/meeting/leaveMeeting").post(protect, leaveMeeting);
-zoomRouter.route("/meeting/getZoomUserId").post(protect, getZoomUserId);
+zoomRouter.route("/meeting/saveZoomUserId").post(protect, saveZoomUserId);

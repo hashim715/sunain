@@ -356,7 +356,7 @@ export const leaveMeeting: RequestHandler = async (
   }
 };
 
-export const getZoomUserId: RequestHandler = async (
+export const saveZoomUserId: RequestHandler = async (
   req: Request,
   res: Response
 ) => {
