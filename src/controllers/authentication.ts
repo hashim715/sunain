@@ -304,6 +304,12 @@ export const verifyPhoneNumberOnLogin: RequestHandler = async (
         .json({ success: false, message: "You are not registered" });
     }
 
+    if (user.verified) {
+      return res
+        .status(400)
+        .json({ success: false, message: "user is already verified" });
+    }
+
     const verification_token = crypto
       .createHash("sha256")
       .update(code + user.verification_secret)
@@ -338,7 +344,6 @@ export const verifyPhoneNumberOnLogin: RequestHandler = async (
         verification_token: null,
         verification_token_expiry: null,
         details_added: user.details_added,
-        adminVerify: user.adminVerify,
       },
     });
 
@@ -356,9 +361,9 @@ export const verifyPhoneNumberOnLogin: RequestHandler = async (
 };
 
 export const sendVerificationCodeToPhoneNumber: RequestHandler = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
+  req,
+  res,
+  next
 ) => {
   try {
     let { phone_number }: { phone_number: string } = req.body;
@@ -376,43 +381,47 @@ export const sendVerificationCodeToPhoneNumber: RequestHandler = async (
       });
     }
 
+    const cookietoken = req.cookies.authToken;
+    const { username }: { username: string } = jwt_decode(cookietoken);
+
+    const user = await prisma.user.findFirst({ where: { username } });
+
+    if (user.verified) {
+      return res.status(400).json({
+        success: false,
+        message: "user is already verified",
+      });
+    }
+
+    if (user.verification_token_expiry) {
+      const now = new Date();
+      const expiry = new Date(user.verification_token_expiry);
+
+      if (now < expiry) {
+        const remainingSeconds = Math.ceil(
+          (expiry.getTime() - now.getTime()) / 1000
+        );
+
+        return res.status(400).json({
+          success: false,
+          message: `A verification code is already sent. Try again after ${remainingSeconds} seconds.`,
+        });
+      }
+    }
+
     const { verificationToken, token, code } = generateVerificationCode();
 
     const currentDate = new Date();
     const next1Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
 
-    const cookietoken = req.cookies.authToken;
-
-    const { username }: { username: string } = jwt_decode(cookietoken);
-
-    // const user = await prisma.user.findFirst({ where: { username: username } });
-
-    // if (user.verification_token) {
-    //   return res.status(400).json({
-    //     success: false,
-    //     message: "Your phone number is not verified try again after 3 minute",
-    //   });
-    // }
-
-    // const checkPhoneNumber = await prisma.user.findFirst({
-    //   where: { phone_number: phone_number },
-    // });
-
-    // if (checkPhoneNumber) {
-    //   return res.status(400).json({
-    //     success: false,
-    //     message: "Phone number already in use with another account",
-    //   });
-    // }
-
-    const message = await twilio_client.messages.create({
+    await twilio_client.messages.create({
       body: `Your Sunain code is ${code}`,
       from: process.env.TWILIO_ACCOUNT_PHONE_NUMBER,
       to: phone_number,
     });
 
     await prisma.user.update({
-      where: { username: username },
+      where: { username },
       data: {
         verification_secret: token,
         verification_token: verificationToken,
@@ -425,7 +434,6 @@ export const sendVerificationCodeToPhoneNumber: RequestHandler = async (
       .status(200)
       .json({ success: true, message: "Message sent successfully" });
   } catch (err) {
-    console.log(err);
     logger.error(`Error in sending the verification code: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
