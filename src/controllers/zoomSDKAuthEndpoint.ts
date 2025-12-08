@@ -781,6 +781,10 @@ recordingQueue.process("process-meeting", async (job: any) => {
         const timestampMatch = s3Key.match(/GMT(\d{8}-\d{6})/);
         const timestamp = timestampMatch ? timestampMatch[1] : "";
 
+        console.log(timestamp);
+        console.log(timestampMatch);
+        console.log(fileMappings);
+
         const matchedMapping = fileMappings.find(
           (mapping) =>
             mapping.timestamp === timestamp &&
