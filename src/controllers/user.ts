@@ -255,45 +255,47 @@ export const getUserMeetingsMetaData: RequestHandler = async (
       },
     });
 
-    const meetingsWithStats = userMeetingsWithStats.map((meeting) => {
-      const conversations = meeting.conversations;
+    const meetingsWithStats = userMeetingsWithStats
+      .map((meeting) => {
+        const conversations = meeting.conversations;
 
-      const totalDuration = conversations.reduce(
-        (sum: number, conv: any) => sum + parseFloat(conv.duration),
-        0
-      );
+        const totalDuration = conversations.reduce(
+          (sum: number, conv: any) => sum + parseFloat(conv.duration),
+          0
+        );
 
-      const totalEarnings = conversations.reduce(
-        (sum: number, conv: any) => sum + parseFloat(conv.earnings),
-        0
-      );
+        const totalEarnings = conversations.reduce(
+          (sum: number, conv: any) => sum + parseFloat(conv.earnings),
+          0
+        );
 
-      const averageQuality =
-        conversations.length > 0
-          ? conversations.reduce(
-              (sum: number, conv: any) => sum + parseFloat(conv.quality),
-              0
-            ) / conversations.length
-          : 0;
+        const averageQuality =
+          conversations.length > 0
+            ? conversations.reduce(
+                (sum: number, conv: any) => sum + parseFloat(conv.quality),
+                0
+              ) / conversations.length
+            : 0;
 
-      return {
-        meetingId: meeting.id,
-        sessionName: meeting.sessionName,
-        language: meeting.language,
-        createdAt: meeting.createdAt,
-        endedAt: meeting.endedAt,
-        isActive: meeting.isActive,
-        userRole: meeting.participants[0]?.role,
-        userDialect: meeting.participants[0]?.dialect,
-        conversationCount: conversations.length,
-        totalDuration: totalDuration,
-        totalDurationFormatted: `${Math.ceil(totalDuration / 60)}m`,
-        totalEarnings: totalEarnings.toFixed(2),
-        averageQuality: averageQuality.toFixed(1),
-        conversations: conversations,
-        isPaid: conversations.every((conv) => conv.paidAt !== null),
-      };
-    });
+        return {
+          meetingId: meeting.id,
+          sessionName: meeting.sessionName,
+          language: meeting.language,
+          createdAt: meeting.createdAt,
+          endedAt: meeting.endedAt,
+          isActive: meeting.isActive,
+          userRole: meeting.participants[0]?.role,
+          userDialect: meeting.participants[0]?.dialect,
+          conversationCount: conversations.length,
+          totalDuration: totalDuration,
+          totalDurationFormatted: `${Math.ceil(totalDuration / 60)}m`,
+          totalEarnings: totalEarnings.toFixed(2),
+          averageQuality: averageQuality.toFixed(1),
+          conversations: conversations,
+          isPaid: conversations.every((conv) => conv.paidAt !== null),
+        };
+      })
+      .filter((meeting) => meeting.conversationCount >= 1);
 
     return res.status(200).json({ success: true, message: meetingsWithStats });
   } catch (err) {
