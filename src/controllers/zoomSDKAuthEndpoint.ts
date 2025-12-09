@@ -271,10 +271,10 @@ interface WebhookDirectories {
   lastUpdated: number;
 }
 interface ZoomFileMapping {
-  fileName: string; // "GMT20241208-120000-separate1.m4a"
-  username: string; // "16778240"
-  timestamp: string; // Extracted from filename
-  separateNumber: string; // "1" or "2"
+  fileName: string;
+  username: string;
+  timestamp: string;
+  separateNumber: string;
 }
 
 interface WebhookZoomFiles {
@@ -610,6 +610,25 @@ const mapZoomUserToDbUser = async (
   }
 };
 
+function calculateAge(dateOfBirth: string) {
+  const normalizedDate = dateOfBirth.replace(/\//g, "-");
+
+  const today = new Date();
+  const birthDate = new Date(normalizedDate);
+
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDiff = today.getMonth() - birthDate.getMonth();
+
+  if (
+    monthDiff < 0 ||
+    (monthDiff === 0 && today.getDate() < birthDate.getDate())
+  ) {
+    age--;
+  }
+
+  return age;
+}
+
 recordingQueue.process("process-meeting", async (job: any) => {
   const { meetingName, bucket, directories } = job.data;
 
@@ -922,6 +941,70 @@ recordingQueue.on("stalled", (job: any) => {
   console.warn(`⚠️ Job ${job.id} stalled`);
 });
 
+const API_BASE_URL = "http://localhost:8000";
+const HOURLY_RATE = 10;
+const SECONDS_PER_HOUR = 3600;
+const NGROK_HEADERS = { "ngrok-skip-browser-warning": "true" };
+
+const callAPI = async (endpoint: string, data: any) => {
+  try {
+    const response = await axios.post(`${API_BASE_URL}${endpoint}`, data, {
+      headers: NGROK_HEADERS,
+    });
+    return response.data;
+  } catch (error) {
+    throw new Error(`API call failed [${endpoint}]: ${error.message}`);
+  }
+};
+
+const calculateEarnings = (durationSeconds: number): number => {
+  return (durationSeconds / SECONDS_PER_HOUR) * HOURLY_RATE;
+};
+
+const processConversation = async (
+  recording: any,
+  meetingName: string,
+  recordingNumber: number,
+  speakerQuality: number,
+  flagging: boolean,
+  flaggin_reasons: string[]
+) => {
+  const conversation = await prisma.conversation.findFirst({
+    where: { recordingId: recording.id },
+    include: { user: true },
+  });
+
+  if (!conversation) {
+    console.warn(`⚠️  No conversation found for recording ${recording.id}`);
+    return;
+  }
+
+  const metadata = await callAPI("/save-metadata", {
+    s3_folder_path: `${meetingName}/recording-${recordingNumber}`,
+    gender: conversation.user.gender,
+    speaker_number: recording.participantNumber,
+    age: calculateAge(conversation.user.date_of_birth),
+    dialect: conversation.user.language_dialect,
+  });
+
+  const duration = metadata.metadata.total_duration;
+
+  await prisma.conversation.update({
+    where: { id: conversation.id },
+    data: {
+      quality: speakerQuality,
+      duration: duration,
+      earnings: calculateEarnings(duration),
+      flagged_status: flagging,
+      flagged_reasons: flaggin_reasons,
+    },
+  });
+
+  console.log(
+    `✅ Updated conversation for participant ${recording.participantNumber}`
+  );
+};
+
 transcriptQueue.process("process-transcripts", async (job: any) => {
   const { meetingName, recordingNumber, sessionId } = job.data;
 
@@ -933,90 +1016,69 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
     where: { sessionName: meetingName },
   });
 
-  try {
-    await axios.post(
-      "https://efc69b3a19ea.ngrok-free.app/transcribe/",
-      {
-        language: meeting.language,
-        s3_folder_path: `${meetingName}/recording-${recordingNumber}`,
-      },
-      {
-        headers: {
-          "ngrok-skip-browser-warning": "true",
-        },
-      }
-    );
-  } catch (err) {
-    throw new Error(`error in transcription process for the meeting ${err}`);
+  if (!meeting) {
+    throw new Error(`Meeting not found: ${meetingName}`);
   }
 
-  try {
-    const response = await axios.post(
-      "https://efc69b3a19ea.ngrok-free.app/analyze-quality/",
-      {
-        language: meeting.language,
-        s3_transcript_path: `${meetingName}/recording-${recordingNumber}/transcription.txt`,
-      },
-      {
-        headers: {
-          "ngrok-skip-browser-warning": "true",
-        },
+  const s3FolderPath = `${meetingName}/recording-${recordingNumber}`;
+
+  console.log("🎙️  Step 1: Transcribing audio...");
+  await callAPI("/transcribe", {
+    language: meeting.language,
+    s3_folder_path: s3FolderPath,
+  });
+  console.log("✅ Transcription complete");
+
+  console.log("📊 Step 2: Analyzing quality...");
+  const qualityData = await callAPI("/analyze-quality", {
+    language: meeting.language,
+    s3_transcript_path: `${s3FolderPath}/transcription.txt`,
+  });
+  console.log("✅ Quality analysis complete");
+
+  console.log("Step 3: Flagging the conversation...");
+  const flagging_response = await callAPI("/flag-filter", {
+    s3_transcript_path: `${s3FolderPath}/transcription.txt`,
+    s3_quality_scores_path: `${s3FolderPath}/quality_scores.json`,
+    language: meeting.language,
+    check_similarity: false,
+  });
+  console.log("✅ flagging of coversation completed");
+
+  console.log("👥 Step 4: Processing conversations...");
+  const recordings = await prisma.recording.findMany({
+    where: {
+      meetingName: meetingName,
+      recordingNumber: recordingNumber,
+    },
+  });
+
+  await Promise.all(
+    recordings.map((recording) => {
+      const speakerKey = `speaker_${recording.participantNumber}`;
+      const speakerQuality = qualityData.speakers[speakerKey]?.final_score;
+
+      if (!speakerQuality) {
+        console.warn(`⚠️  No quality score for ${speakerKey}`);
+        return Promise.resolve();
       }
-    );
 
-    console.log(response.data);
-
-    const userIdsByRecordingNumber = await prisma.recording.findMany({
-      where: { meetingName: meetingName, recordingNumber: recordingNumber },
-    });
-
-    userIdsByRecordingNumber.forEach(async (recording) => {
-      const HOURLY_RATE = 10;
-      const SECONDS_PER_HOUR = 3600;
-      const durationInHours =
-        response.data.conversation_duration / SECONDS_PER_HOUR;
-
-      if (recording.participantNumber === 1) {
-        const conversation = await prisma.conversation.findFirst({
-          where: { recordingId: recording.id },
-        });
-
-        if (conversation) {
-          await prisma.conversation.update({
-            where: { id: conversation.id },
-            data: {
-              quality: response.data.speakers.speaker_1.final_score,
-              duration: response.data.conversation_duration,
-              earnings: durationInHours * HOURLY_RATE,
-            },
-          });
-        }
-      } else {
-        const conversation = await prisma.conversation.findFirst({
-          where: { recordingId: recording.id },
-        });
-
-        if (conversation) {
-          await prisma.conversation.update({
-            where: { id: conversation.id },
-            data: {
-              quality: response.data.speakers.speaker_1.final_score,
-              duration: response.data.conversation_duration,
-              earnings: durationInHours * HOURLY_RATE,
-            },
-          });
-        }
-      }
-    });
-  } catch (err) {
-    throw new Error(
-      `error in calculating quality process for the meeting ${err}`
-    );
-  }
+      return processConversation(
+        recording,
+        meetingName,
+        recordingNumber,
+        speakerQuality,
+        flagging_response.should_flag,
+        flagging_response.reasons
+      );
+    })
+  );
+  console.log("✅ All conversations processed successfully");
 
   return {
     success: true,
-    message: "All processes done successfully",
+    message: "All processes completed successfully",
+    processedRecordings: recordings.length,
   };
 });
 

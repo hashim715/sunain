@@ -103,8 +103,9 @@ model Conversation {
   quality         Decimal  @db.Decimal(10, 2)     
   earnings        Decimal  @db.Decimal(10, 2) 
   status          String   @default("completed")
-  notes           String?  
-  
+  notes           String?
+  flagged_status  Boolean   @default(false)  
+  flagged_reasons String[]
   startTime       DateTime
   endTime         DateTime
   createdAt       DateTime @default(now())
