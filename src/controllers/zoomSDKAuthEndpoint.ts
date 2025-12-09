@@ -427,7 +427,7 @@ export const transcriptQueue = new Queue("transcript-processing", {
     port: parseInt(process.env.REDIS_PORT || "6379"),
   },
   defaultJobOptions: {
-    attempts: 3,
+    attempts: 5,
     backoff: { type: "exponential", delay: 300000 },
     removeOnComplete: 50,
     removeOnFail: 200,
