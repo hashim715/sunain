@@ -941,7 +941,7 @@ recordingQueue.on("stalled", (job: any) => {
   console.warn(`⚠️ Job ${job.id} stalled`);
 });
 
-const API_BASE_URL = "http://localhost:8000";
+const API_BASE_URL = "https://42ebeebca469.ngrok-free.app";
 const HOURLY_RATE = 10;
 const SECONDS_PER_HOUR = 3600;
 const NGROK_HEADERS = { "ngrok-skip-browser-warning": "true" };
