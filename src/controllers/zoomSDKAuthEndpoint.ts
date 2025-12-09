@@ -944,7 +944,7 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
 
   try {
     const response = await axios.post(
-      "http://localhost:8001/analyze-quality/",
+      "http://localhost:8000/analyze-quality/",
       {
         language: meeting.language,
         s3_transcript_path: `${meetingName}/recording-${recordingNumber}/transcription.txt`,

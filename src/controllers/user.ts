@@ -288,9 +288,9 @@ export const getUserMeetingsMetaData: RequestHandler = async (
           userDialect: meeting.participants[0]?.dialect,
           conversationCount: conversations.length,
           totalDuration: totalDuration,
-          totalDurationFormatted: `${Math.ceil(totalDuration / 60)}m`,
-          totalEarnings: totalEarnings.toFixed(2),
-          averageQuality: averageQuality.toFixed(1),
+          totalDurationFormatted: `${(totalDuration / 60).toFixed(2)}m`,
+          totalEarnings: parseFloat(totalEarnings.toFixed(2)),
+          averageQuality: parseFloat(averageQuality.toFixed(2)),
           conversations: conversations,
           isPaid: conversations.every((conv) => conv.paidAt !== null),
         };
