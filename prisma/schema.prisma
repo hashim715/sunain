@@ -41,7 +41,7 @@ model User {
   verification_secret String?
   verification_token_expiry String?
   verified Boolean @default(false)
-  adminVerify Boolean @default(false)
+  adminVerify Boolean @default(true)
   stripeAccountId       String?  @unique
   stripeOnboardingComplete Boolean @default(false)
   stripeDetailsSubmitted Boolean @default(false)
