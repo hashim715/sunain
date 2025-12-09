@@ -934,20 +934,33 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
   });
 
   try {
-    await axios.post("http://localhost:8000/transcribe/", {
-      language: meeting.language,
-      s3_folder_path: `${meetingName}/recording-${recordingNumber}`,
-    });
+    await axios.post(
+      "https://efc69b3a19ea.ngrok-free.app/transcribe/",
+      {
+        language: meeting.language,
+        s3_folder_path: `${meetingName}/recording-${recordingNumber}`,
+      },
+      {
+        headers: {
+          "ngrok-skip-browser-warning": "true",
+        },
+      }
+    );
   } catch (err) {
     throw new Error(`error in transcription process for the meeting ${err}`);
   }
 
   try {
     const response = await axios.post(
-      "http://localhost:8000/analyze-quality/",
+      "https://efc69b3a19ea.ngrok-free.app/analyze-quality/",
       {
         language: meeting.language,
         s3_transcript_path: `${meetingName}/recording-${recordingNumber}/transcription.txt`,
+      },
+      {
+        headers: {
+          "ngrok-skip-browser-warning": "true",
+        },
       }
     );
 
