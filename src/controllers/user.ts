@@ -226,6 +226,7 @@ export const getUserMeetingsMetaData: RequestHandler = async (
         conversations: {
           where: {
             userId: user.id,
+            status: "completed",
           },
           select: {
             id: true,

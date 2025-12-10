@@ -99,13 +99,13 @@ model Conversation {
   id              Int      @id @default(autoincrement())
   meetingId       Int
   userId          Int     
-  recordingId     Int?     // NEW: Link to specific recording file
+  recordingId     Int?     
 
   participantDialects String[]
   duration        Decimal  @db.Decimal(10, 2)     
   quality         Decimal  @db.Decimal(10, 2)     
   earnings        Decimal  @db.Decimal(10, 2) 
-  status          String   @default("completed")
+  status          String   @default("incomplete")
   notes           String?
   flagged_status  Boolean   @default(false)  
   flagged_reasons String[]

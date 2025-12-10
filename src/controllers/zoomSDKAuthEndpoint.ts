@@ -863,10 +863,10 @@ recordingQueue.process("process-meeting", async (job: any) => {
             userId: dbUserId,
             recordingId: recording.id,
             participantDialects: dialects,
-            duration: 30,
-            quality: Math.floor(Math.random() * (95 - 75 + 1)) + 75,
-            earnings: 35.0,
-            status: "completed",
+            duration: 0.0,
+            quality: 0.0,
+            earnings: 0.0,
+            status: "incomplete",
             notes: `Conversation recording ${session.recordingNumber}`,
             startTime: session.recordingStartTime,
             endTime: session.recordingEndTime || new Date(),
@@ -997,6 +997,7 @@ const processConversation = async (
       earnings: calculateEarnings(duration),
       flagged_status: flagging,
       flagged_reasons: flaggin_reasons,
+      status: "completed",
     },
   });
 
