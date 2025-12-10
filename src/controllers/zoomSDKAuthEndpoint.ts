@@ -1092,7 +1092,7 @@ transcriptQueue.on("failed", (job: any, err: any) => {
     err.message
   );
 
-  if (job.attemptsMade >= 3) {
+  if (job.attemptsMade >= 5) {
     console.error(`🚨 CRITICAL: Job ${job.id} permanently failed`);
   }
 });
