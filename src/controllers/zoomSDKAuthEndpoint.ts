@@ -815,7 +815,7 @@ recordingQueue.process("process-meeting", async (job: any) => {
           );
         }
 
-        const newKey = `${meetingName}/recording-${session.recordingNumber}/participant-${participantNumber}.m4a`;
+        const newKey = `${meeting.language}/${meetingName}/recording-${session.recordingNumber}/participant-${participantNumber}.m4a`;
 
         console.log(
           `   ${s3Key.split("/").pop()} → recording-${
@@ -964,6 +964,7 @@ const calculateEarnings = (durationSeconds: number): number => {
 const processConversation = async (
   recording: any,
   meetingName: string,
+  language: string,
   recordingNumber: number,
   speakerQuality: number,
   flagging: boolean,
@@ -980,7 +981,7 @@ const processConversation = async (
   }
 
   const metadata = await callAPI("/save-metadata", {
-    s3_folder_path: `${meetingName}/recording-${recordingNumber}`,
+    s3_folder_path: `${language}/${meetingName}/recording-${recordingNumber}`,
     gender: conversation.user.gender,
     speaker_number: recording.participantNumber,
     age: calculateAge(conversation.user.date_of_birth),
@@ -1021,7 +1022,7 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
     throw new Error(`Meeting not found: ${meetingName}`);
   }
 
-  const s3FolderPath = `${meetingName}/recording-${recordingNumber}`;
+  const s3FolderPath = `${meeting.language}/${meetingName}/recording-${recordingNumber}`;
 
   console.log("🎙️  Step 1: Transcribing audio...");
   await callAPI("/transcribe", {
@@ -1067,6 +1068,7 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
       return processConversation(
         recording,
         meetingName,
+        meeting.language,
         recordingNumber,
         speakerQuality,
         flagging_response.should_flag,
