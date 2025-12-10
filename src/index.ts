@@ -18,6 +18,9 @@ import {
   recordingQueue,
   transcriptQueue,
 } from "./controllers/zoomSDKAuthEndpoint";
+import { conversationDataRouter } from "./routes/conversationDataRoutes";
+import { fillTopicData } from "./utils/fillTopicTablesData";
+import { prisma } from "./config/postgres";
 
 dotenv.config();
 
@@ -89,6 +92,7 @@ app.use("/v1/user", userRouter);
 app.use("/v1/zoomSDKAuth", ZoomAuthEndpointRouter);
 app.use("/v1/zoom", zoomRouter);
 app.use("/v1/health", healthCheckRouter);
+app.use("/v1/conversationsData", conversationDataRouter);
 
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {
@@ -112,6 +116,15 @@ chatController(app, server);
 const start = async (): Promise<void> => {
   try {
     logger.info("🚀 Starting server...");
+
+    // fillTopicData()
+    //   .catch((e) => {
+    //     console.error(e);
+    //     process.exit(1);
+    //   })
+    //   .finally(async () => {
+    //     await prisma.$disconnect();
+    //   });
 
     if (process.env.ENV !== "production") {
       logger.info("🗑️ Clearing all jobs from queue...");

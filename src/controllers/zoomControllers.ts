@@ -131,7 +131,15 @@ export const createMeeting: RequestHandler = async (
   req: Request,
   res: Response
 ) => {
-  const { sessionName, passcode } = req.body;
+  const { sessionName, passcode, topicIds } = req.body;
+
+  if (!topicIds || topicIds.length !== 5) {
+    return res.status(400).json({
+      success: false,
+      message: "Exactly 5 topics must be selected",
+    });
+  }
+
   try {
     if (!sessionName || !passcode) {
       return res.status(400).json({ message: "Missing required fields" });
@@ -161,6 +169,15 @@ export const createMeeting: RequestHandler = async (
         language: user.language,
         participantCount: 1,
       },
+    });
+
+    // Create the topic associations
+    await prisma.meetingTopic.createMany({
+      data: topicIds.map((topicId: number, index: number) => ({
+        meetingId: meeting.id,
+        topicId: topicId,
+        order: index + 1,
+      })),
     });
 
     await prisma.meetingParticipant.create({
@@ -211,9 +228,68 @@ export const checkHostStatus: RequestHandler = async (
       return res.status(404).json({ message: "Meeting not found" });
     }
 
+    const meetingData = await prisma.meeting.findFirst({
+      where: {
+        sessionName,
+      },
+      include: {
+        topics: {
+          include: {
+            topic: {
+              include: {
+                subtopics: {
+                  include: {
+                    vocabulary: {
+                      orderBy: { order: "asc" },
+                    },
+                    starters: {
+                      orderBy: { order: "asc" },
+                    },
+                    examples: {
+                      orderBy: { order: "asc" },
+                    },
+                  },
+                  orderBy: { order: "asc" },
+                },
+              },
+            },
+          },
+          orderBy: {
+            order: "asc",
+          },
+        },
+      },
+    });
+
+    if (!meetingData) {
+      return res.status(404).json({
+        success: false,
+        message: "Meeting not found",
+      });
+    }
+
+    const formattedTopics = meetingData.topics.map((mt) => ({
+      title: mt.topic.title,
+      subtopics: mt.topic.subtopics.map((subtopic) => ({
+        title: subtopic.title,
+        description: {
+          overview: subtopic.overview,
+          vocabulary: subtopic.vocabulary.map((v) => v.term),
+          starters: subtopic.starters.map((s) => s.text),
+          examples: subtopic.examples.map((e) => e.text),
+        },
+      })),
+    }));
+
     const isHost = meetingParticipant.role === "host";
 
-    return res.status(200).json({ isHost });
+    return res.status(200).json({
+      isHost,
+      data: {
+        ...meeting,
+        topics: formattedTopics,
+      },
+    });
   } catch (err) {
     console.error("Error checking host status:", err);
     return res.status(500).json({ message: "Failed to check host status" });

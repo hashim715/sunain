@@ -67,6 +67,9 @@ model Meeting {
   
   participants MeetingParticipant[]
   conversations Conversation[]
+
+  // Many-to-many relationship with topics
+  topics      MeetingTopic[]
   
   @@index([sessionName])
   @@index([isActive])
@@ -157,4 +160,96 @@ model RecordingSession {
   @@unique([meetingName, recordingNumber])
   @@index([meetingName])
   @@map("recording_sessions")
+}
+
+model Topic {
+  id        Int   @id @default(autoincrement())
+  title     String
+  order     Int      
+  subtopics Subtopic[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Many-to-many relationship with meetings
+  meetings  MeetingTopic[]
+
+  @@index([order])
+}
+
+// Junction/Join table for many-to-many relationship
+model MeetingTopic {
+  id        Int   @id @default(autoincrement())
+  
+  meetingId Int
+  meeting   Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
+  
+  topicId   Int
+  topic     Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  
+  order     Int      // To maintain the order of topics selected (1-5)
+  
+  createdAt DateTime @default(now())
+
+  @@unique([meetingId, topicId]) // Prevent duplicate topic in same meeting
+  @@index([meetingId])
+  @@index([topicId])
+}
+
+model Subtopic {
+  id          Int   @id @default(autoincrement())
+  title       String
+  overview    String   @db.Text
+  order       Int      
+  
+  topicId     Int
+  topic       Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  
+  vocabulary  Vocabulary[]
+  starters    ConversationStarter[]
+  examples    Example[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([topicId])
+  @@index([order])
+}
+
+model Vocabulary {
+  id         Int   @id @default(autoincrement())
+  term       String
+  order      Int      
+  
+  subtopicId Int
+  subtopic   Subtopic @relation(fields: [subtopicId], references: [id], onDelete: Cascade)
+  
+  createdAt  DateTime @default(now())
+
+  @@index([subtopicId])
+}
+
+model ConversationStarter {
+  id         Int   @id @default(autoincrement())
+  text       String   @db.Text
+  order      Int      
+  
+  subtopicId Int
+  subtopic   Subtopic @relation(fields: [subtopicId], references: [id], onDelete: Cascade)
+  
+  createdAt  DateTime @default(now())
+
+  @@index([subtopicId])
+}
+
+model Example {
+  id         Int   @id @default(autoincrement())
+  text       String
+  order      Int     
+  
+  subtopicId Int
+  subtopic   Subtopic @relation(fields: [subtopicId], references: [id], onDelete: Cascade)
+  
+  createdAt  DateTime @default(now())
+
+  @@index([subtopicId])
 }
