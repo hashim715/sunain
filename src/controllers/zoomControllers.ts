@@ -286,7 +286,7 @@ export const checkHostStatus: RequestHandler = async (
     return res.status(200).json({
       isHost,
       data: {
-        ...meeting,
+        ...meetingData,
         topics: formattedTopics,
       },
     });
