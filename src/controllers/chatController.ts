@@ -33,33 +33,12 @@ export const chatController = async (
   const RECONNECTION_GRACE_PERIOD = 30000;
 
   const REDIS_KEYS = {
-    meetingStartTime: (meetingName: string) =>
-      `meeting:${meetingName}:startTime`,
     meetingState: (meetingName: string) => `meeting:${meetingName}:state`,
     socketUserInfo: (socketId: string) => `socket:${socketId}:userInfo`,
     meetingRecording: (meetingName: string) =>
       `meeting:${meetingName}:recording`,
     userSocket: (meetingName: string, zoomUserId: string) =>
       `user:${meetingName}:${zoomUserId}:socket`,
-  };
-
-  const getMeetingStartTime = async (
-    meetingName: string
-  ): Promise<number | null> => {
-    const startTime = await redis.get(REDIS_KEYS.meetingStartTime(meetingName));
-    return startTime ? parseInt(startTime) : null;
-  };
-
-  const setMeetingStartTime = async (
-    meetingName: string,
-    timestamp: number
-  ): Promise<void> => {
-    await redis.set(
-      REDIS_KEYS.meetingStartTime(meetingName),
-      timestamp,
-      "EX",
-      86400
-    );
   };
 
   const getMeetingState = async (meetingName: string) => {
@@ -154,7 +133,6 @@ export const chatController = async (
   };
 
   const deleteMeetingData = async (meetingName: string): Promise<void> => {
-    await redis.del(REDIS_KEYS.meetingStartTime(meetingName));
     await redis.del(REDIS_KEYS.meetingState(meetingName));
     await redis.del(REDIS_KEYS.meetingRecording(meetingName));
   };
@@ -234,10 +212,6 @@ export const chatController = async (
         zoomUserId,
         isReconnect,
       }) => {
-        console.log(
-          `👤 ${userName} joining ${meetingName} (reconnect: ${isReconnect})`
-        );
-
         socket.join(meetingName);
 
         const userKey = `${meetingName}:${zoomUserId}`;
@@ -271,22 +245,15 @@ export const chatController = async (
         }
 
         try {
-          const existingStartTime = await getMeetingStartTime(meetingName);
+          const existingMeetingState = await getMeetingState(meetingName);
 
-          if (isHost && !existingStartTime) {
-            await setMeetingStartTime(meetingName, timestamp);
-
+          if (isHost && !existingMeetingState) {
             const initialState: MeetingState = {
               topicIndex: 0,
               subtopicIndex: null,
               completedTopics: [],
             };
             await setMeetingState(meetingName, initialState);
-          }
-
-          const startTime = await getMeetingStartTime(meetingName);
-          if (startTime) {
-            socket.emit("meeting-time-sync", { startTime });
           }
         } catch (error) {
           console.error("❌ Error in join-meeting:", error);
@@ -306,29 +273,6 @@ export const chatController = async (
       }
     });
 
-    socket.on("check-can-join", async ({ meetingName }, callback) => {
-      try {
-        const room = io.sockets.adapter.rooms.get(meetingName);
-        const participantCount = room ? room.size : 0;
-
-        const MAX_PARTICIPANTS = 2;
-        const canJoin = participantCount < MAX_PARTICIPANTS;
-
-        callback({
-          success: true,
-          participantCount,
-          maxParticipants: MAX_PARTICIPANTS,
-          canJoin,
-        });
-      } catch (error) {
-        console.error("Error checking participant count:", error);
-        callback({
-          success: false,
-          error: "Failed to check participant count",
-        });
-      }
-    });
-
     socket.on("request-topic-state", async ({ meetingName }) => {
       try {
         const state = await getMeetingState(meetingName);
@@ -344,17 +288,6 @@ export const chatController = async (
         }
       } catch (error) {
         console.error("❌ Error in request-topic-state:", error);
-      }
-    });
-
-    socket.on("request-meeting-time", async ({ meetingName }) => {
-      try {
-        const startTime = await getMeetingStartTime(meetingName);
-        if (startTime) {
-          socket.emit("meeting-time-sync", { startTime });
-        }
-      } catch (error) {
-        console.error("❌ Error in request-meeting-time:", error);
       }
     });
 
