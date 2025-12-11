@@ -116,10 +116,10 @@ model Conversation {
   endTime         DateTime
   createdAt       DateTime @default(now())
   paidAt          DateTime? 
-  
+  paymentStatus   String   @default("unpaid")
   meeting         Meeting  @relation(fields: [meetingId], references: [id], onDelete: Cascade)
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  recording       Recording? @relation(fields: [recordingId], references: [id]) // NEW
+  recording       Recording? @relation(fields: [recordingId], references: [id]) 
   
   @@index([userId])
   @@index([meetingId])
