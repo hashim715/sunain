@@ -20,8 +20,8 @@ export const createConnectAccount: RequestHandler = async (
       if (!user.stripeOnboardingComplete) {
         const accountLink = await stripe.accountLinks.create({
           account: user.stripeAccountId,
-          refresh_url: `${process.env.FRONTEND_URL}/settings/payouts?refresh=true`,
-          return_url: `${process.env.FRONTEND_URL}/settings/payouts?success=true`,
+          refresh_url: `${process.env.FRONTEND_URL}/earnings?refresh=true`,
+          return_url: `${process.env.FRONTEND_URL}/earnings?success=true`,
           type: "account_onboarding",
         });
 
@@ -37,7 +37,7 @@ export const createConnectAccount: RequestHandler = async (
 
     const account = await stripe.accounts.create({
       type: "express",
-      country: "US",
+      country: user.countryCode,
       email: user.email,
       capabilities: {
         transfers: { requested: true },
@@ -46,6 +46,9 @@ export const createConnectAccount: RequestHandler = async (
       metadata: {
         userId: user.id,
         platform: "Sunain",
+      },
+      tos_acceptance: {
+        service_agreement: "recipient",
       },
     });
 
@@ -58,8 +61,8 @@ export const createConnectAccount: RequestHandler = async (
 
     const accountLink = await stripe.accountLinks.create({
       account: account.id,
-      refresh_url: `${process.env.FRONTEND_URL}/settings/payouts?refresh=true`,
-      return_url: `${process.env.FRONTEND_URL}/settings/payouts?success=true`,
+      refresh_url: `${process.env.FRONTEND_URL}/earnings?refresh=true`,
+      return_url: `${process.env.FRONTEND_URL}/earnings?success=true`,
       type: "account_onboarding",
     });
 
@@ -163,8 +166,8 @@ export const refreshOnBoardingLink: RequestHandler = async (
 
     const accountLink = await stripe.accountLinks.create({
       account: user.stripeAccountId,
-      refresh_url: `${process.env.FRONTEND_URL}/settings/payouts?refresh=true`,
-      return_url: `${process.env.FRONTEND_URL}/settings/payouts?success=true`,
+      refresh_url: `${process.env.FRONTEND_URL}/earnings?refresh=true`,
+      return_url: `${process.env.FRONTEND_URL}/earnings?success=true`,
       type: "account_onboarding",
     });
 
@@ -207,6 +210,39 @@ export const handleWebhook = async (req: Request, res: Response) => {
     return res.status(200).json({ received: true });
   } catch (err) {
     logger.error(`Webhook signature verification failed: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const getDashboardLink = async (req: Request, res: Response) => {
+  try {
+    const cookietoken = req.cookies.authToken;
+
+    const { username }: { username: string } = jwt_decode(cookietoken);
+
+    const user = await prisma.user.findFirst({
+      where: { username: username },
+    });
+
+    if (!user.stripeAccountId) {
+      return res.status(400).json({
+        success: false,
+        error: "No Stripe account found",
+      });
+    }
+
+    // Create login link for Express Dashboard
+    const loginLink = await stripe.accounts.createLoginLink(
+      user.stripeAccountId
+    );
+
+    return res.status(200).json({ success: true, message: loginLink });
+  } catch (err) {
+    logger.error(`Erros in refreshing onboarding link: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }

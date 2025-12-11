@@ -65,6 +65,9 @@ export const addUserDetails: RequestHandler = async (
       !backgroundInfo.areaGrowUp ||
       !backgroundInfo.nativeLanguage ||
       !backgroundInfo.cityOfResidence ||
+      !backgroundInfo.country ||
+      !backgroundInfo.countryCode ||
+      !backgroundInfo.state ||
       !backgroundInfo.dialect ||
       !backgroundInfo.educationLevel ||
       !backgroundInfo.languageProficiency ||
@@ -136,6 +139,9 @@ export const addUserDetails: RequestHandler = async (
         quiz_answers: [...Object.keys(backgroundInfo.quizAnswers)],
         details_added: true,
         audio_sample_url: audioUrl,
+        country: backgroundInfo.country,
+        countryCode: backgroundInfo.countryCode,
+        state: backgroundInfo.state,
       },
     });
 
