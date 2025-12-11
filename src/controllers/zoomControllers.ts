@@ -356,7 +356,10 @@ export const joinMeeting: RequestHandler = async (
     if (meetingParticipant) {
       await prisma.meeting.update({
         where: { sessionName: sessionName },
-        data: { isActive: true },
+        data: {
+          isActive: true,
+          participantCount: existingMeeting.participantCount + 1,
+        },
       });
       return res
         .status(200)
