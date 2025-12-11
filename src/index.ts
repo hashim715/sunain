@@ -20,6 +20,7 @@ import {
 } from "./controllers/zoomSDKAuthEndpoint";
 import { conversationDataRouter } from "./routes/conversationDataRoutes";
 import { stripeRouter } from "./routes/stripeRoutes";
+import { adminRouter } from "./routes/adminRoutes";
 import { fillTopicData } from "./utils/fillTopicTablesData";
 import { prisma } from "./config/postgres";
 
@@ -95,6 +96,7 @@ app.use("/v1/zoom", zoomRouter);
 app.use("/v1/health", healthCheckRouter);
 app.use("/v1/conversationsData", conversationDataRouter);
 app.use("/v1/stripe", stripeRouter);
+app.use("/v1/admin", adminRouter);
 
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {

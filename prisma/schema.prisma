@@ -71,7 +71,6 @@ model Meeting {
   participants MeetingParticipant[]
   conversations Conversation[]
 
-  // Many-to-many relationship with topics
   topics      MeetingTopic[]
   
   @@index([sessionName])
@@ -139,9 +138,8 @@ model Recording {
   status            String   @default("processing")
   createdAt         DateTime @default(now())
 
-  userId            Int?     // Your database user ID (mapped from zoomUserId)
+  userId            Int?     
 
-  // NEW RELATION - Add this
   conversations     Conversation[]
 
   @@index([meetingName, recordingNumber])
@@ -179,7 +177,6 @@ model Topic {
   @@index([order])
 }
 
-// Junction/Join table for many-to-many relationship
 model MeetingTopic {
   id        Int   @id @default(autoincrement())
   
