@@ -412,7 +412,7 @@ export const sendVerificationCodeToPhoneNumber: RequestHandler = async (
     const { verificationToken, token, code } = generateVerificationCode();
 
     const currentDate = new Date();
-    const next1Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
+    const next2Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
 
     await twilio_client.messages.create({
       body: `Your Sunain code is ${code}`,
@@ -425,7 +425,7 @@ export const sendVerificationCodeToPhoneNumber: RequestHandler = async (
       data: {
         verification_secret: token,
         verification_token: verificationToken,
-        verification_token_expiry: next1Minutes.toISOString(),
+        verification_token_expiry: next2Minutes.toISOString(),
         phone_number: phone_number,
       },
     });
