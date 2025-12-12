@@ -285,6 +285,10 @@ export const getUserMeetingsMetaData: RequestHandler = async (
               ) / conversations.length
             : 0;
 
+        const isPaid = conversations.find(
+          (conv) => conv.paymentStatus === "paid"
+        );
+
         return {
           meetingId: meeting.id,
           sessionName: meeting.sessionName,
@@ -300,11 +304,8 @@ export const getUserMeetingsMetaData: RequestHandler = async (
           totalEarnings: parseFloat(totalEarnings.toFixed(2)),
           averageQuality: parseFloat(averageQuality.toFixed(2)),
           conversations: conversations,
-          isPaid: conversations.find((conv) => conv.paymentStatus === "paid")
-            ? true
-            : false,
-          paidAt: conversations.find((conv) => conv.paymentStatus === "paid")
-            .paidAt,
+          isPaid: isPaid !== undefined ? true : false,
+          paidAt: isPaid !== undefined ? isPaid.paidAt : null,
         };
       })
       .filter((meeting) => meeting.conversationCount >= 1);
