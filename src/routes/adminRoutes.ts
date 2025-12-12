@@ -15,6 +15,8 @@ import {
   getLanguageStats,
   getDialectDistribution,
   getDialectPairs,
+  markRoomsAsPaid,
+  undoPayroll,
 } from "../controllers/adminControllers";
 
 export const adminRouter: Router = express.Router();
@@ -36,3 +38,5 @@ adminRouter
   .route("/getDialectDistribution/:language")
   .get(getDialectDistribution);
 adminRouter.route("/getDialectPairs/:language").get(getDialectPairs);
+adminRouter.route("/markRoomsAsPaid").post(markRoomsAsPaid);
+adminRouter.route("/undoPayroll").post(undoPayroll);

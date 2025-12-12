@@ -821,6 +821,89 @@ export const getDialectPairs: RequestHandler = async (
   }
 };
 
+export const markRoomsAsPaid: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { room_ids } = req.body;
+
+    if (!room_ids || !Array.isArray(room_ids) || room_ids.length === 0) {
+      return res.status(400).json({ error: "Room IDs array is required" });
+    }
+
+    const result = await prisma.conversation.updateMany({
+      where: {
+        meeting: {
+          sessionName: {
+            in: room_ids,
+          },
+        },
+        flagged_status: false,
+        paymentStatus: "unpaid",
+      },
+      data: {
+        paymentStatus: "paid",
+        paidAt: new Date(),
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Marked ${result.count} conversations as paid`,
+      updated_count: result.count,
+    });
+  } catch (err) {
+    logger.error(`Error marking rooms as paid: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const undoPayroll: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { room_ids } = req.body;
+
+    if (!room_ids || !Array.isArray(room_ids) || room_ids.length === 0) {
+      return res.status(400).json({ error: "Room IDs array is required" });
+    }
+
+    const result = await prisma.conversation.updateMany({
+      where: {
+        meeting: {
+          sessionName: {
+            in: room_ids,
+          },
+        },
+        paymentStatus: "paid",
+      },
+      data: {
+        paymentStatus: "unpaid",
+        paidAt: null,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Reverted ${result.count} conversations back to unpaid`,
+      updated_count: result.count,
+    });
+  } catch (err) {
+    logger.error(`Error undoing payroll: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
 function calculateAge(dateOfBirth: string) {
   const dob = new Date(dateOfBirth);
   const today = new Date();
