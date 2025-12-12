@@ -363,7 +363,7 @@ export const getPaymentRoomsForUser: RequestHandler = async (
       distinct: ["meetingId"],
     });
 
-    const roomIds = unpaidConversations.map((c) => `Room-${c.id}`);
+    const roomIds = unpaidConversations.map((c) => `Room-${c.meeting.id}`);
 
     return res.status(200).json({
       user_id: userId,
