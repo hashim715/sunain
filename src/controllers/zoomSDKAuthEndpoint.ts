@@ -968,7 +968,8 @@ const processConversation = async (
   recordingNumber: number,
   speakerQuality: number,
   flagging: boolean,
-  flaggin_reasons: string[]
+  flaggin_reasons: string[],
+  totalDuration: number
 ) => {
   const conversation = await prisma.conversation.findFirst({
     where: { recordingId: recording.id },
@@ -988,14 +989,12 @@ const processConversation = async (
     dialect: conversation.user.language_dialect,
   });
 
-  const duration = metadata.metadata.total_duration;
-
   await prisma.conversation.update({
     where: { id: conversation.id },
     data: {
       quality: speakerQuality,
-      duration: duration,
-      earnings: calculateEarnings(duration),
+      duration: totalDuration,
+      earnings: calculateEarnings(totalDuration),
       flagged_status: flagging,
       flagged_reasons: flaggin_reasons,
       status: "completed",
@@ -1059,6 +1058,7 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
     recordings.map((recording) => {
       const speakerKey = `speaker_${recording.participantNumber}`;
       const speakerQuality = qualityData.speakers[speakerKey]?.final_score;
+      const totalDuration = qualityData.conversation_duration;
 
       if (!speakerQuality) {
         console.warn(`⚠️  No quality score for ${speakerKey}`);
@@ -1072,7 +1072,8 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
         recordingNumber,
         speakerQuality,
         flagging_response.should_flag,
-        flagging_response.reasons
+        flagging_response.reasons,
+        totalDuration
       );
     })
   );
