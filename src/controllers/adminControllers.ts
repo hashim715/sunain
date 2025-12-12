@@ -407,6 +407,7 @@ export const getRoomDetails: RequestHandler = async (
           },
         },
         conversations: {
+          where: { status: "completed", flagged_status: false },
           orderBy: {
             createdAt: "asc",
           },
@@ -481,6 +482,10 @@ export const getAllUsers: RequestHandler = async (
             earnings: true,
             paymentStatus: true,
             status: true,
+          },
+          where: {
+            status: "completed",
+            flagged_status: false,
           },
         },
       },
@@ -569,7 +574,8 @@ export const getLanguageStats: RequestHandler = async (
         meeting: {
           language: language,
         },
-        status: "complete",
+        status: "completed",
+        flagged_status: false,
       },
       _sum: {
         duration: true,
@@ -615,7 +621,8 @@ export const getAllLanguageStats: RequestHandler = async (
       where: {
         conversations: {
           some: {
-            status: "complete",
+            status: "completed",
+            flagged_status: false,
           },
         },
       },
@@ -632,7 +639,8 @@ export const getAllLanguageStats: RequestHandler = async (
             meeting: {
               language: meeting.language,
             },
-            status: "complete",
+            status: "completed",
+            flagged_status: false,
           },
           _sum: {
             duration: true,
@@ -738,7 +746,8 @@ export const getDialectPairs: RequestHandler = async (
         meeting: {
           language: language,
         },
-        status: "complete",
+        status: "completed",
+        flagged_status: false,
       },
       include: {
         meeting: {
