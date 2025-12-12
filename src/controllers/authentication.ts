@@ -149,6 +149,40 @@ export const googleredirectauth: RequestHandler = async (
   }
 };
 
+export const changePhoneNumber: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { password }: { password: string } = req.body;
+
+    const token = req.cookies.authToken;
+
+    if (!token) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    const { username }: { username: string } = jwt_decode(token);
+
+    const user = await prisma.user.findFirst({ where: { username: username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+  } catch (err) {
+    logger.error(`Error in getting user: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
 export const getUser: RequestHandler = async (
   req: Request,
   res: Response,

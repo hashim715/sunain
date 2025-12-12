@@ -233,6 +233,7 @@ export const getUserMeetingsMetaData: RequestHandler = async (
           where: {
             userId: user.id,
             status: "completed",
+            flagged_status: false,
           },
           select: {
             id: true,
@@ -313,6 +314,78 @@ export const getUserMeetingsMetaData: RequestHandler = async (
     return res.status(200).json({ success: true, message: meetingsWithStats });
   } catch (err) {
     logger.error(`Error in getting meeting metadata: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const getUserEearnings: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const token = req.cookies.authToken;
+
+    if (!token) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    const { username }: { username: string } = jwt_decode(token);
+
+    const user = await prisma.user.findFirst({ where: { username: username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    const result = await prisma.conversation.aggregate({
+      where: {
+        userId: user.id,
+        status: "completed",
+        flagged_status: false,
+      },
+      _sum: {
+        earnings: true,
+      },
+    });
+
+    const paidResult = await prisma.conversation.aggregate({
+      where: {
+        userId: user.id,
+        paymentStatus: "paid",
+        flagged_status: false,
+      },
+      _sum: {
+        earnings: true,
+      },
+    });
+
+    const pendingResult = await prisma.conversation.aggregate({
+      where: {
+        userId: user.id,
+        paymentStatus: "unpaid",
+        flagged_status: false,
+      },
+      _sum: {
+        earnings: true,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      totalEarnings: result._sum.earnings || 0,
+      amountPaid: paidResult._sum.earnings || 0,
+      amountPending: pendingResult._sum.earnings || 0,
+    });
+  } catch (err) {
+    logger.error(`Error in getting user earnings: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }
