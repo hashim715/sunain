@@ -35,22 +35,49 @@ export const createConnectAccount: RequestHandler = async (
       }
     }
 
-    const account = await stripe.accounts.create({
-      type: "express",
-      country: user.countryCode,
-      email: user.email,
-      capabilities: {
-        transfers: { requested: true },
-      },
-      business_type: "individual",
-      metadata: {
-        userId: user.id,
-        platform: "Sunain",
-      },
-      tos_acceptance: {
-        service_agreement: "recipient",
-      },
-    });
+    let account = null;
+
+    if (user.countryCode === "US") {
+      account = await stripe.accounts.create({
+        type: "express",
+        country: user.countryCode,
+        email: user.email,
+        capabilities: {
+          transfers: { requested: true },
+        },
+        business_type: "individual",
+        metadata: {
+          userId: user.id,
+          platform: "Sunain",
+        },
+        tos_acceptance: {
+          service_agreement: "recipient",
+        },
+      });
+    } else {
+      account = await stripe.accounts.create({
+        type: "express",
+        country: user.countryCode,
+        email: user.email,
+        capabilities: {
+          transfers: { requested: true },
+        },
+        business_type: "individual",
+        metadata: {
+          userId: user.id,
+          platform: "Sunain",
+        },
+      });
+    }
+
+    if (!account) {
+      return res
+        .status(400)
+        .json({
+          success: false,
+          message: "sorry account could not be created",
+        });
+    }
 
     await prisma.user.update({
       where: { id: user.id },

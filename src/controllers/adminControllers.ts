@@ -107,6 +107,7 @@ export const flaggedConversations: RequestHandler = async (
     const conversations = await prisma.conversation.findMany({
       where: {
         flagged_status: true,
+        status: "completed",
       },
       include: {
         meeting: {
@@ -238,8 +239,6 @@ export const flaggedConversationsCount: RequestHandler = async (
 
     const user = await prisma.user.findFirst({ where: { id: userIdInt } });
 
-    console.log(user);
-
     if (!user) {
       return res
         .status(404)
@@ -250,6 +249,7 @@ export const flaggedConversationsCount: RequestHandler = async (
       where: {
         userId: user.id,
         flagged_status: true,
+        status: "completed",
       },
     });
 
@@ -307,10 +307,10 @@ export const getAllRoomsForUser: RequestHandler = async (
       },
     });
 
-    const roomIds = participations.map((p) => p.meeting.sessionName);
+    const roomIds = participations.map((p) => `Room-${p.meeting.id}`);
 
     return res.status(200).json({
-      user_id: `${userId}`,
+      user_id: userId,
       room_ids: roomIds,
       all_room_ids: roomIds.join(", "),
     });
@@ -349,21 +349,24 @@ export const getPaymentRoomsForUser: RequestHandler = async (
       where: {
         userId: user.id,
         paymentStatus: "unpaid",
+        flagged_status: false,
+        status: "completed",
       },
       include: {
         meeting: {
           select: {
             sessionName: true,
+            id: true,
           },
         },
       },
       distinct: ["meetingId"],
     });
 
-    const roomIds = unpaidConversations.map((c) => c.meeting.sessionName);
+    const roomIds = unpaidConversations.map((c) => `Room-${c.id}`);
 
     return res.status(200).json({
-      user_id: `${userId}`,
+      user_id: userId,
       room_ids: roomIds,
       payment_due_rooms: roomIds.join(", "),
     });
@@ -390,7 +393,7 @@ export const getRoomDetails: RequestHandler = async (
 
     const meeting = await prisma.meeting.findUnique({
       where: {
-        sessionName: roomId,
+        id: parseInt(roomId.split("-")[1]),
       },
       include: {
         participants: {
@@ -445,7 +448,7 @@ export const getRoomDetails: RequestHandler = async (
     }, {});
 
     const roomDetails = {
-      room_id: meeting.sessionName,
+      room_id: `Room-${meeting.id}`,
       participant_1_id: participants[0] ? `user_${participants[0].id}` : null,
       participant_2_id: participants[1] ? `user_${participants[1].id}` : null,
       language: meeting.language,
@@ -477,6 +480,7 @@ export const getAllUsers: RequestHandler = async (
             quality: true,
             earnings: true,
             paymentStatus: true,
+            status: true,
           },
         },
       },
