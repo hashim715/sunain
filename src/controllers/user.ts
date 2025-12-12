@@ -245,6 +245,7 @@ export const getUserMeetingsMetaData: RequestHandler = async (
             createdAt: true,
             paidAt: true,
             notes: true,
+            paymentStatus: true,
           },
         },
         _count: {
@@ -299,7 +300,11 @@ export const getUserMeetingsMetaData: RequestHandler = async (
           totalEarnings: parseFloat(totalEarnings.toFixed(2)),
           averageQuality: parseFloat(averageQuality.toFixed(2)),
           conversations: conversations,
-          isPaid: conversations.every((conv) => conv.paidAt !== null),
+          isPaid: conversations.find((conv) => conv.paymentStatus === "paid")
+            ? true
+            : false,
+          paidAt: conversations.find((conv) => conv.paymentStatus === "paid")
+            .paidAt,
         };
       })
       .filter((meeting) => meeting.conversationCount >= 1);
