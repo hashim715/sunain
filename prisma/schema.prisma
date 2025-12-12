@@ -44,7 +44,8 @@ model User {
   verification_secret String?
   verification_token_expiry String?
   verified Boolean @default(false)
-  adminVerify Boolean @default(true)
+  adminVerify String @default("waiting") // active, suspended
+
   stripeAccountId       String?  @unique
   stripeOnboardingComplete Boolean @default(false)
   stripeDetailsSubmitted Boolean @default(false)

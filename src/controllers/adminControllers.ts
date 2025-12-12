@@ -13,7 +13,7 @@ export const getUsersWaitList: RequestHandler = async (
   try {
     const waitlist = await prisma.user.findMany({
       where: {
-        adminVerify: false,
+        adminVerify: "waiting",
         details_added: true,
         verified: true,
       },
@@ -79,7 +79,7 @@ export const updateUserStatus: RequestHandler = async (
 
     await prisma.user.update({
       where: { id: user.id },
-      data: { adminVerify: status === "approved" ? true : false },
+      data: { adminVerify: status === "approved" ? "active" : "suspended" },
     });
 
     return res.status(200).json({
