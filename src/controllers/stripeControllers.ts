@@ -50,9 +50,6 @@ export const createConnectAccount: RequestHandler = async (
           userId: user.id,
           platform: "Sunain",
         },
-        tos_acceptance: {
-          service_agreement: "recipient",
-        },
       });
     } else {
       account = await stripe.accounts.create({
@@ -67,16 +64,17 @@ export const createConnectAccount: RequestHandler = async (
           userId: user.id,
           platform: "Sunain",
         },
+        tos_acceptance: {
+          service_agreement: "recipient",
+        },
       });
     }
 
     if (!account) {
-      return res
-        .status(400)
-        .json({
-          success: false,
-          message: "sorry account could not be created",
-        });
+      return res.status(400).json({
+        success: false,
+        message: "sorry account could not be created",
+      });
     }
 
     await prisma.user.update({
