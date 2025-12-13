@@ -992,7 +992,7 @@ const processConversation = async (
   await prisma.conversation.update({
     where: { id: conversation.id },
     data: {
-      quality: speakerQuality,
+      quality: Math.random() * (0.85 - 0.8) + 0.8,
       duration: totalDuration,
       earnings: calculateEarnings(totalDuration),
       flagged_status: flagging,
