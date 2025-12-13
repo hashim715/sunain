@@ -942,7 +942,7 @@ recordingQueue.on("stalled", (job: any) => {
 });
 
 const API_BASE_URL = "http://0.0.0.0:8000";
-const HOURLY_RATE = 10;
+const HOURLY_RATE = 16;
 const SECONDS_PER_HOUR = 3600;
 const NGROK_HEADERS = { "ngrok-skip-browser-warning": "true" };
 
