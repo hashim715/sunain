@@ -497,7 +497,7 @@ export const getAllUsers: RequestHandler = async (
     const formattedUsers = users.map((user) => {
       const totalRecordingMinutes =
         user.conversations.reduce((sum, conv) => {
-          return sum + parseFloat(conv.duration.toString());
+          return sum + Number(conv.duration);
         }, 0) / 60;
 
       const numConversations = user.conversations.length;
@@ -536,7 +536,7 @@ export const getAllUsers: RequestHandler = async (
         age: age,
         language: user.language || "N/A",
         dialect: user.language_dialect || "N/A",
-        total_recording_minutes: parseFloat(totalRecordingMinutes.toFixed(1)),
+        total_recording_minutes: parseFloat(totalRecordingMinutes.toFixed(2)),
         num_conversations: numConversations,
         total_money_earned: parseFloat(totalMoneyEarned.toFixed(2)),
         total_balance: parseFloat(totalBalance.toFixed(2)),
@@ -835,8 +835,13 @@ export const markRoomsAsPaid: RequestHandler = async (
     const result = await prisma.conversation.updateMany({
       where: {
         meeting: {
-          sessionName: {
+          id: {
             in: room_ids,
+          },
+        },
+        user: {
+          stripeAccountId: {
+            not: null, // or use: isNot: null
           },
         },
         flagged_status: false,
@@ -877,7 +882,7 @@ export const undoPayroll: RequestHandler = async (
     const result = await prisma.conversation.updateMany({
       where: {
         meeting: {
-          sessionName: {
+          id: {
             in: room_ids,
           },
         },
