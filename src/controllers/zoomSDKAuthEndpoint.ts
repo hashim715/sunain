@@ -788,6 +788,7 @@ recordingQueue.process("process-meeting", async (job: any) => {
 
       console.log(`📦 Organizing session ${session.recordingNumber}`);
       console.log(`   Files: ${files.length}`);
+      const folder_name = new Date();
 
       for (const s3Key of files) {
         const participantMatch = s3Key.match(/separate(\d+)/);
@@ -815,7 +816,7 @@ recordingQueue.process("process-meeting", async (job: any) => {
           );
         }
 
-        const newKey = `${meeting.language}/${meetingName}/recording-${session.recordingNumber}/participant-${participantNumber}.m4a`;
+        const newKey = `${meeting.language}/${folder_name}/recording-${session.recordingNumber}/participant-${participantNumber}.m4a`;
 
         console.log(
           `   ${s3Key.split("/").pop()} → recording-${
@@ -888,6 +889,7 @@ recordingQueue.process("process-meeting", async (job: any) => {
         {
           meetingName: meetingName,
           recordingNumber: session.recordingNumber,
+          folder_name: folder_name,
           sessionId: session.id,
         },
         {
@@ -969,7 +971,8 @@ const processConversation = async (
   speakerQuality: number,
   flagging: boolean,
   flaggin_reasons: string[],
-  totalDuration: number
+  totalDuration: number,
+  folder_name: string
 ) => {
   const conversation = await prisma.conversation.findFirst({
     where: { recordingId: recording.id },
@@ -982,7 +985,7 @@ const processConversation = async (
   }
 
   const metadata = await callAPI("/save-metadata", {
-    s3_folder_path: `${language}/${meetingName}/recording-${recordingNumber}`,
+    s3_folder_path: `${language}/${folder_name}/recording-${recordingNumber}`,
     gender: conversation.user.gender,
     speaker_number: recording.participantNumber,
     age: calculateAge(conversation.user.date_of_birth),
@@ -1007,7 +1010,7 @@ const processConversation = async (
 };
 
 transcriptQueue.process("process-transcripts", async (job: any) => {
-  const { meetingName, recordingNumber, sessionId } = job.data;
+  const { meetingName, recordingNumber, folder_name, sessionId } = job.data;
 
   console.log(`📥 Processing transcripts: ${meetingName}`);
   console.log(`📥 Recording Number: recording-${recordingNumber}`);
@@ -1021,7 +1024,7 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
     throw new Error(`Meeting not found: ${meetingName}`);
   }
 
-  const s3FolderPath = `${meeting.language}/${meetingName}/recording-${recordingNumber}`;
+  const s3FolderPath = `${meeting.language}/${folder_name}/recording-${recordingNumber}`;
 
   console.log("🎙️  Step 1: Transcribing audio...");
   await callAPI("/transcribe", {
@@ -1073,7 +1076,8 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
         speakerQuality,
         flagging_response.should_flag,
         flagging_response.reasons,
-        totalDuration
+        totalDuration,
+        folder_name
       );
     })
   );
