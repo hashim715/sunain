@@ -11,6 +11,9 @@ import { generateVerificationCode } from "../utils/getVerificationCode";
 import { twilio_client } from "../utils/twilioClient";
 import { validatePhoneNumber } from "../utils/validatePhoneNumber";
 import crypto from "crypto";
+import { validateEmail } from "../utils/checkvalidEmail";
+import { email_transporter } from "../utils/sendEmail";
+import bcrypt from "bcrypt";
 
 dotenv.config();
 
@@ -128,6 +131,7 @@ export const googleredirectauth: RequestHandler = async (
         google_access_token: access_token,
         google_refresh_token: refresh_token,
         google_token_expiry: expiryDate.toISOString(),
+        email_verified: true,
       },
     });
 
@@ -141,6 +145,146 @@ export const googleredirectauth: RequestHandler = async (
     });
   } catch (err) {
     logger.error(`Error in googleredirectauth: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const register: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid inputs" });
+    }
+
+    if (!validateEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "Email that you provided is not valid",
+      });
+    }
+
+    let user = await prisma.user.findFirst({
+      where: { email: email },
+    });
+
+    if (user) {
+      return res.status(400).json({
+        success: false,
+        message: "User with that email already exists",
+      });
+    }
+
+    const uuid = uuidv4();
+
+    const username = uuid;
+
+    const user_ = await prisma.user.findFirst({
+      where: { username: username },
+    });
+
+    if (user_) {
+      return badRequestResponse(res, "Try again something went wrong");
+    }
+
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+    const { verificationToken, token, code } = generateVerificationCode();
+
+    const currentDate = new Date();
+    const next30Minutes = new Date(currentDate.getTime() + 30 * 60 * 1000);
+
+    const mailOptions = {
+      from: process.env.EMAIL_FROM,
+      to: email,
+      subject: "Hello from CourseX",
+      text: "Verify your Email",
+      html: `<h1>Your verification code is: ${code}</h1></br><p>Click on the link given below:<a>https://coursex.us/app/verification/${email}/verify</a></p>`,
+    };
+
+    await email_transporter.sendMail(mailOptions);
+
+    await prisma.user.create({
+      data: {
+        email: email,
+        username: username,
+        verification_token_email: verificationToken,
+        verification_secret_email: token,
+        verification_token_expiry_email: next30Minutes.toISOString(),
+        password: hashedPassword,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message:
+        "Verification code has been sent your email you need to verify yourself.",
+    });
+  } catch (err) {
+    logger.error(`Error in registering the user: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const login: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid inputs" });
+    }
+
+    if (!validateEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "Email that you provided is not valid",
+      });
+    }
+
+    let user = await prisma.user.findFirst({
+      where: { email: email },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "User with that email does not exists",
+      });
+    }
+
+    const isValid = await bcrypt.compare(password, user.password);
+
+    if (!isValid) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid password",
+      });
+    }
+
+    await sendTokenCookie(res, user.username);
+
+    return res.status(201).json({
+      success: true,
+      message: "Logged in successfully",
+      details_added: user.details_added,
+      verified: user.verified,
+      email_verified: user.email_verified,
+    });
+  } catch (err) {
+    logger.error(`Error in login: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }

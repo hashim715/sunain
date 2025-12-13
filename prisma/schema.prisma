@@ -43,6 +43,11 @@ model User {
   verification_token String?
   verification_secret String?
   verification_token_expiry String?
+  verification_token_email String?
+  verification_secret_email String?
+  verification_token_expiry_email String?
+  email_verified Boolean @default(false)
+  password String?
   verified Boolean @default(false)
   adminVerify String @default("waiting") // active, suspended
 
