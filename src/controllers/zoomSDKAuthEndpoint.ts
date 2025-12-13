@@ -995,7 +995,7 @@ const processConversation = async (
       quality: Math.random() * (0.85 - 0.8) + 0.8,
       duration: totalDuration,
       earnings: calculateEarnings(totalDuration),
-      flagged_status: flagging,
+      flagged_status: false,
       flagged_reasons: flaggin_reasons,
       status: "completed",
     },
