@@ -133,7 +133,7 @@ export const createMeeting: RequestHandler = async (
 ) => {
   const { sessionName, passcode, topicIds } = req.body;
 
-  if (!topicIds || topicIds.length !== 5) {
+  if (!topicIds || topicIds.length < 1) {
     return res.status(400).json({
       success: false,
       message: "Exactly 5 topics must be selected",
