@@ -788,7 +788,7 @@ recordingQueue.process("process-meeting", async (job: any) => {
 
       console.log(`📦 Organizing session ${session.recordingNumber}`);
       console.log(`   Files: ${files.length}`);
-      const folder_name = new Date();
+      const folder_name = new Date().toISOString();
 
       for (const s3Key of files) {
         const participantMatch = s3Key.match(/separate(\d+)/);
