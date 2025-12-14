@@ -790,7 +790,7 @@ recordingQueue.process("process-meeting", async (job: any) => {
       console.log(`   Files: ${files.length}`);
 
       const now = new Date();
-      const folderName = now.toLocaleString("en-US", {
+      const formatter = new Intl.DateTimeFormat("en-CA", {
         timeZone: "America/Los_Angeles",
         year: "numeric",
         month: "2-digit",
@@ -798,8 +798,13 @@ recordingQueue.process("process-meeting", async (job: any) => {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
-        hour12: true,
+        hour12: false,
       });
+
+      const parts = formatter.formatToParts(now);
+      const values = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+
+      const folderName = `${values.year}-${values.month}-${values.day}T${values.hour}-${values.minute}-${values.second}`;
 
       const folder_name = folderName;
       //const folder_name = new Date().toISOString();
