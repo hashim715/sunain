@@ -316,6 +316,7 @@ export const joinMeeting: RequestHandler = async (
 
     const existingMeeting = await prisma.meeting.findUnique({
       where: { sessionName: sessionName },
+      include: { participants: true },
     });
 
     if (!existingMeeting) {
@@ -352,6 +353,17 @@ export const joinMeeting: RequestHandler = async (
     const meetingParticipant = await prisma.meetingParticipant.findFirst({
       where: { meetingId: existingMeeting.id, userId: user.id },
     });
+
+    if (existingMeeting.participants.length === 2) {
+      if (!meetingParticipant) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+            message: "meeting already occupied by two participants",
+          });
+      }
+    }
 
     if (meetingParticipant) {
       await prisma.meeting.update({
