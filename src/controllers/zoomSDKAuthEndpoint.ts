@@ -788,6 +788,7 @@ recordingQueue.process("process-meeting", async (job: any) => {
 
       console.log(`📦 Organizing session ${session.recordingNumber}`);
       console.log(`   Files: ${files.length}`);
+
       const now = new Date();
       const folderName = now
         .toLocaleString("en-US", {
