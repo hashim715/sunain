@@ -788,7 +788,22 @@ recordingQueue.process("process-meeting", async (job: any) => {
 
       console.log(`📦 Organizing session ${session.recordingNumber}`);
       console.log(`   Files: ${files.length}`);
-      const folder_name = new Date().toISOString();
+      const now = new Date();
+      const folderName = now
+        .toLocaleString("en-US", {
+          timeZone: "America/Los_Angeles",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        })
+        .replace(/[\/,:\s]/g, "-");
+
+      const folder_name = folderName;
+      //const folder_name = new Date().toISOString();
 
       for (const s3Key of files) {
         const participantMatch = s3Key.match(/separate(\d+)/);
