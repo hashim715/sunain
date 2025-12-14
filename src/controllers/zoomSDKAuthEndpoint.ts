@@ -984,12 +984,60 @@ const processConversation = async (
     return;
   }
 
+  const currentMeeting = await prisma.meeting.findUnique({
+    where: { id: conversation.meetingId },
+    include: {
+      participants: {
+        select: { userId: true },
+      },
+    },
+  });
+
+  const userIds = currentMeeting.participants.map((p) => p.userId);
+  const userId1 = userIds[0];
+  const userId2 = userIds[1];
+
+  const previousMeetings = await prisma.meeting.findMany({
+    where: {
+      id: { not: currentMeeting.id },
+      participants: {
+        every: {
+          userId: { in: [userId1, userId2] },
+        },
+      },
+      conversations: {
+        some: {},
+      },
+    },
+    include: {
+      _count: {
+        select: {
+          conversations: true,
+        },
+      },
+      participants: {
+        where: {
+          userId: { in: [userId1, userId2] },
+        },
+      },
+    },
+  });
+
+  const validMeetings = previousMeetings.filter(
+    (meeting) =>
+      meeting.participants.length === 2 && meeting._count.conversations > 0
+  );
+
+  const count = validMeetings.length;
+
   const metadata = await callAPI("/save-metadata", {
     s3_folder_path: `${language}/${folder_name}/recording-${recordingNumber}`,
     gender: conversation.user.gender,
     speaker_number: recording.participantNumber,
     age: calculateAge(conversation.user.date_of_birth),
     dialect: conversation.user.language_dialect,
+    conversationNumber: count + 1,
+    userId: conversation.userId,
   });
 
   await prisma.conversation.update({
