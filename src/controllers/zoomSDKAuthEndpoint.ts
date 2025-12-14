@@ -1099,7 +1099,6 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
 
   console.log("🎙️  Step 4: Merging audio to conversation.wav...");
   await callAPI("/merge-audio", {
-    language: meeting.language,
     s3_folder_path: s3FolderPath,
   });
   console.log("✅ Audio merging completed");
