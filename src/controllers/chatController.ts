@@ -35,6 +35,7 @@ interface AudioStreamInfo {
   filepath: string;
   startedAt: number;
   participantNumber: number;
+  recordingNumber: number; // ✅ Add this
 }
 
 interface RecordingMetadata {
@@ -522,12 +523,17 @@ export const chatController = async (
         try {
           const { meetingName, userName } = data;
 
-          // Verify session exists in database
-          // Get the highest recording number for this meeting
+          // Get the current active recording session
           const session = await prisma.recordingSession.findFirst({
-            where: { meetingName },
-            orderBy: { recordingNumber: "desc" },
+            where: {
+              meetingName,
+              isRecording: true, // ✅ Get the ACTIVE one, not just latest
+            },
           });
+
+          if (!session) {
+            throw new Error("No active recording session found");
+          }
 
           const recordingNumber = session.recordingNumber;
 
@@ -542,6 +548,7 @@ export const chatController = async (
             include: {
               participants: {
                 include: { user: true },
+                orderBy: { userId: "asc" }, // ✅ Consistent ordering
               },
             },
           });
@@ -567,17 +574,20 @@ export const chatController = async (
             filepath,
             startedAt: timestamp,
             participantNumber,
+            recordingNumber, // ✅ Store it here
           };
           await setAudioStreamInfo(meetingName, userName, streamInfo);
 
           console.log(
             `✅ Audio stream started: ${userName} (P${participantNumber}) recording #${recordingNumber}`
           );
-          socket.emit("audio-stream-ready", { filepath });
+          console.log(`   File: ${filepath}`);
+
+          socket.emit("audio-stream-ready", { filepath, recordingNumber });
         } catch (error) {
           console.error("❌ Error starting audio stream:", error);
           socket.emit("audio-stream-error", {
-            message: "Failed to start audio stream",
+            message: error.message || "Failed to start audio stream",
           });
         }
       }
@@ -625,6 +635,8 @@ export const chatController = async (
         try {
           const { meetingName, userName, socketId } = data;
 
+          console.log(`🛑 Stop request from ${userName}`);
+
           if (socketId === null) {
             closeWriteStream(socket.id);
           } else {
@@ -633,27 +645,53 @@ export const chatController = async (
 
           const streamInfo = await getAudioStreamInfo(meetingName, userName);
 
-          const duration = Date.now() - streamInfo.startedAt;
+          if (!streamInfo) {
+            console.warn(`⚠️ No stream info for ${userName}`);
+            socket.emit("audio-stream-error", {
+              message: "No active stream found",
+            });
+            return;
+          }
 
-          // Verify session exists in database
-          // Get the highest recording number for this meeting
-          const lastSession = await prisma.recordingSession.findFirst({
-            where: { meetingName },
-            orderBy: { recordingNumber: "desc" },
+          // ✅ Use the recording number that was stored when stream started
+          const recordingNumber = streamInfo.recordingNumber;
+
+          console.log(`🔍 Stream info:`, {
+            recordingNumber,
+            participantNumber: streamInfo.participantNumber,
+            filepath: streamInfo.filepath,
           });
 
-          const recordingNumber = lastSession.recordingNumber;
+          // Verify file exists
+          if (!fs.existsSync(streamInfo.filepath)) {
+            console.error(`❌ File not found: ${streamInfo.filepath}`);
+            throw new Error(`Recording file not found: ${streamInfo.filepath}`);
+          }
+
+          const stats = fs.statSync(streamInfo.filepath);
+          console.log(
+            `✅ File exists: ${streamInfo.filepath} (${stats.size} bytes)`
+          );
+
+          const duration = Date.now() - streamInfo.startedAt;
 
           // Store recording metadata
           const recordingMetadata: RecordingMetadata = {
             meetingName,
-            recordingNumber,
+            recordingNumber, // ✅ From streamInfo, not from DB query
             userName,
             filepath: streamInfo.filepath,
             participantNumber: streamInfo.participantNumber,
             startTime: new Date(streamInfo.startedAt),
             endTime: new Date(),
           };
+
+          console.log(`📝 Saving metadata:`, {
+            recordingNumber,
+            participantNumber: streamInfo.participantNumber,
+            filepath: streamInfo.filepath,
+            fileSize: stats.size,
+          });
 
           await addRecordingToSession(
             meetingName,
@@ -667,16 +705,48 @@ export const chatController = async (
             `🛑 Recording #${recordingNumber} stopped for ${userName} (${duration}ms)`
           );
 
+          // Get session info
+          const session = await prisma.recordingSession.findFirst({
+            where: {
+              meetingName,
+              recordingNumber,
+            },
+          });
+
+          if (!session) {
+            console.warn(
+              `⚠️ Session not found: ${meetingName} #${recordingNumber}`
+            );
+            return;
+          }
+
           // Check if all participants have stopped recording for this session
           const sessionRecordings = await getSessionRecordings(
             meetingName,
             recordingNumber
           );
 
-          if (sessionRecordings.length === lastSession.participantCount) {
+          console.log(
+            `📊 Session progress: ${sessionRecordings.length}/${session.participantCount}`
+          );
+
+          if (sessionRecordings.length === session.participantCount) {
             console.log(
               `✅ All ${sessionRecordings.length} recordings complete for session ${recordingNumber}`
             );
+
+            // Verify all files exist before queueing
+            console.log("🔍 Verifying all files before queueing...");
+            for (const rec of sessionRecordings) {
+              if (!fs.existsSync(rec.filepath)) {
+                console.error(`❌ Missing file: ${rec.filepath}`);
+                throw new Error(`Recording file missing: ${rec.filepath}`);
+              }
+              const fileStats = fs.statSync(rec.filepath);
+              console.log(
+                `   ✅ ${rec.userName}: ${rec.filepath} (${fileStats.size} bytes)`
+              );
+            }
 
             // Queue the processing job
             await localRecordingQueue.add(
@@ -687,7 +757,7 @@ export const chatController = async (
                 recordings: sessionRecordings,
               },
               {
-                jobId: `local-${meetingName}-${recordingNumber}`,
+                jobId: `local-${meetingName}-${recordingNumber}-${Date.now()}`,
                 priority: 1,
               }
             );
@@ -697,16 +767,20 @@ export const chatController = async (
             );
           } else {
             console.log(
-              `⏳ Waiting for more recordings: ${sessionRecordings.length}/${lastSession.participantCount}`
+              `⏳ Waiting for more recordings: ${sessionRecordings.length}/${session.participantCount}`
             );
           }
 
           socket.emit("audio-stream-stopped", {
-            filepath: streamInfo?.filepath,
-            duration: streamInfo ? Date.now() - streamInfo.startedAt : 0,
+            filepath: streamInfo.filepath,
+            duration,
+            recordingNumber,
           });
         } catch (error) {
           console.error("❌ Error stopping audio stream:", error);
+          socket.emit("audio-stream-error", {
+            message: error.message || "Failed to stop stream",
+          });
         }
       }
     );
