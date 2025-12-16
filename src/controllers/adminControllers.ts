@@ -3,8 +3,66 @@ import { Request, Response, RequestHandler } from "express";
 import { internalServerError } from "./errors";
 import dotenv from "dotenv";
 import { logger } from "../utils/logger";
+import bcrypt from "bcrypt";
+import { sendTokenCookie } from "../utils/sendTokenCookie";
 
 dotenv.config();
+
+export const login: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid inputs" });
+    }
+
+    let user = await prisma.user.findFirst({
+      where: { username: username },
+    });
+
+    if (!user || user.user_type !== "admin") {
+      return res.status(400).json({
+        success: false,
+        message: "User is not authorized",
+      });
+    }
+
+    const isValid = await bcrypt.compare(password, user.password);
+
+    if (!isValid) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid password",
+      });
+    }
+
+    if (!user.email_verified) {
+      return res.status(400).json({
+        success: false,
+        message: "your email is not verified",
+      });
+    }
+
+    await sendTokenCookie(res, user.username);
+
+    return res.status(201).json({
+      success: true,
+      message: "Logged in successfully",
+      details_added: user.details_added,
+      verified: user.verified,
+      email_verified: user.email_verified,
+    });
+  } catch (err) {
+    logger.error(`Error in login: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
 
 export const getUsersWaitList: RequestHandler = async (
   req: Request,
@@ -843,6 +901,10 @@ export const markRoomsAsPaid: RequestHandler = async (
           stripeAccountId: {
             not: null, // or use: isNot: null
           },
+          stripeChargesEnabled: true,
+          stripeDetailsSubmitted: true,
+          stripeOnboardingComplete: true,
+          stripePayoutsEnabled: true,
         },
         flagged_status: false,
         paymentStatus: "unpaid",

@@ -8,6 +8,10 @@ import {
   refreshToken,
   sendVerificationCodeToPhoneNumber,
   verifyPhoneNumberOnLogin,
+  register,
+  login,
+  verifyEmail,
+  resendCodeToEmail,
 } from "../controllers/authentication";
 import { protect } from "../middleware/middleware";
 
@@ -15,6 +19,10 @@ export const authRouter: Router = express.Router();
 
 authRouter.route("/google").get(googleAuth);
 authRouter.route("/google/callback").post(googleredirectauth);
+authRouter.route("/register").post(register);
+authRouter.route("/login").post(login);
+authRouter.route("/verifyEmail").post(verifyEmail);
+authRouter.route("/resendCodeToEmail").post(resendCodeToEmail);
 authRouter.route("/me").get(getUser);
 authRouter.route("/logout").get(logOut);
 authRouter.route("/refresh").post(refreshToken);

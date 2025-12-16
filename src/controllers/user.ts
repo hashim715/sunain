@@ -164,6 +164,8 @@ export const getUserDetails: RequestHandler = async (
   try {
     const token = req.cookies.authToken;
 
+    console.log(token);
+
     if (!token) {
       return res
         .status(404)

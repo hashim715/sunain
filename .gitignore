@@ -8,3 +8,5 @@ dist/*
 src/config/deletekafkaGroups.ts
 service-account
 uploads
+
+src/audio-recordings

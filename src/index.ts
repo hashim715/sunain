@@ -23,6 +23,38 @@ import { stripeRouter } from "./routes/stripeRoutes";
 import { adminRouter } from "./routes/adminRoutes";
 import { fillTopicData } from "./utils/fillTopicTablesData";
 import { prisma } from "./config/postgres";
+import cron from "node-cron";
+import multer from "multer";
+import fs from "fs";
+import path from "path";
+
+const cleanupUnverifiedAccounts = async () => {
+  try {
+    logger.info("🧹 Running cleanup job for unverified accounts...");
+
+    const cutoffDate = new Date();
+    cutoffDate.setMinutes(cutoffDate.getMinutes() - 40);
+
+    const result = await prisma.user.deleteMany({
+      where: {
+        AND: [
+          {
+            OR: [{ verified: false }, { email_verified: false }],
+          },
+          {
+            createdAt: {
+              lt: cutoffDate,
+            },
+          },
+        ],
+      },
+    });
+
+    logger.info(`✅ Deleted ${result.count} unverified accounts`);
+  } catch (error) {
+    logger.error("❌ Error cleaning up unverified accounts:", error);
+  }
+};
 
 dotenv.config();
 
@@ -98,6 +130,103 @@ app.use("/v1/conversationsData", conversationDataRouter);
 app.use("/v1/stripe", stripeRouter);
 app.use("/v1/admin", adminRouter);
 
+// Create uploads directory
+const uploadsDir = path.join(__dirname, "audio-recordings");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Configure multer storage
+const storage = multer.diskStorage({
+  destination: (req: any, file: Express.Multer.File, cb: any) => {
+    // meetingName comes from formData, but we need to parse it first
+    // Temporarily save to root uploads dir, we'll organize later
+    cb(null, uploadsDir);
+  },
+  filename: (req: any, file: Express.Multer.File, cb: any) => {
+    const timestamp = Date.now();
+    // Use timestamp for now, we'll rename after getting meetingName
+    cb(null, `temp_${timestamp}.webm`);
+  },
+});
+
+const upload = multer({ storage });
+
+// Upload audio chunk endpoint
+app.post(
+  "/v1/audio/upload-chunk",
+  upload.single("audioChunk"),
+  (req: Request, res: Response) => {
+    try {
+      const file = req.file;
+      if (!file) {
+        return res
+          .status(400)
+          .json({ success: false, message: "No file uploaded" });
+      }
+
+      const { meetingName, userName } = req.body;
+
+      if (!meetingName || !userName) {
+        // Delete temp file if missing data
+        fs.unlinkSync(file.path);
+        return res.status(400).json({
+          success: false,
+          message: "Missing meetingName or userName",
+        });
+      }
+
+      // Create meeting directory
+      const meetingDir = path.join(uploadsDir, meetingName);
+      if (!fs.existsSync(meetingDir)) {
+        fs.mkdirSync(meetingDir, { recursive: true });
+      }
+
+      // Move file to proper location with proper name
+      const timestamp = Date.now();
+      const finalFilename = `${userName}_${timestamp}.webm`;
+      const finalPath = path.join(meetingDir, finalFilename);
+
+      fs.renameSync(file.path, finalPath);
+
+      console.log("✅ Audio chunk received:", finalFilename);
+      console.log("📁 Saved to:", finalPath);
+
+      res.json({
+        success: true,
+        filename: finalFilename,
+        path: finalPath,
+      });
+    } catch (error) {
+      console.error("❌ Error uploading audio:", error);
+      res.status(500).json({ success: false, error: "Failed to upload audio" });
+    }
+  }
+);
+
+// Finalize recording endpoint
+app.post("/v1/audio/finalize", (req: Request, res: Response) => {
+  try {
+    const { meetingName, userName } = req.body;
+
+    if (!meetingName || !userName) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing meetingName or userName",
+      });
+    }
+
+    console.log(`✅ Recording finalized for ${userName} in ${meetingName}`);
+
+    res.json({ success: true, message: "Recording finalized" });
+  } catch (error) {
+    console.error("❌ Error finalizing:", error);
+    res
+      .status(500)
+      .json({ success: false, error: "Failed to finalize recording" });
+  }
+});
+
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {
     return next(err);
@@ -140,6 +269,10 @@ const start = async (): Promise<void> => {
       await transcriptQueue.resume();
       logger.info("✅ Queue cleared and ready");
     }
+
+    // Schedule cleanup job to run every 10 minutes
+    // cron.schedule("*/10 * * * *", cleanupUnverifiedAccounts);
+    // logger.info("⏰ Scheduled cleanup job every 10 minutes");
 
     server.listen(PORT, (): void => {
       logger.info(`Listening on port ${PORT}`);

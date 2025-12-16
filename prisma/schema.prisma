@@ -50,6 +50,8 @@ model User {
   password String?
   verified Boolean @default(false)
   adminVerify String @default("waiting") // active, suspended
+  sms_attempts_today Int @default(0)
+  sms_attempts_reset_at DateTime?
 
   stripeAccountId       String?  @unique
   stripeOnboardingComplete Boolean @default(false)

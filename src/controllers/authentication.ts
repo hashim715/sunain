@@ -162,6 +162,7 @@ export const register: RequestHandler = async (req: Request, res: Response) => {
         .status(400)
         .json({ success: false, message: "Please provide valid inputs" });
     }
+    console.log(email, password);
 
     if (!validateEmail(email)) {
       return res.status(400).json({
@@ -199,33 +200,37 @@ export const register: RequestHandler = async (req: Request, res: Response) => {
     const { verificationToken, token, code } = generateVerificationCode();
 
     const currentDate = new Date();
-    const next30Minutes = new Date(currentDate.getTime() + 30 * 60 * 1000);
+    const next2Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
 
-    const mailOptions = {
-      from: process.env.EMAIL_FROM,
-      to: email,
-      subject: "Hello from CourseX",
-      text: "Verify your Email",
-      html: `<h1>Your verification code is: ${code}</h1></br><p>Click on the link given below:<a>https://coursex.us/app/verification/${email}/verify</a></p>`,
-    };
+    console.log(code);
 
-    await email_transporter.sendMail(mailOptions);
+    // const mailOptions = {
+    //   from: process.env.EMAIL_FROM,
+    //   to: email,
+    //   subject: "Hello from CourseX",
+    //   text: "Verify your Email",
+    //   html: `<h1>Your verification code is: ${code}</h1></br><p>Click on the link given below:<a>https://coursex.us/app/verification/${email}/verify</a></p>`,
+    // };
 
-    await prisma.user.create({
+    // await email_transporter.sendMail(mailOptions);
+
+    user = await prisma.user.create({
       data: {
         email: email,
         username: username,
         verification_token_email: verificationToken,
         verification_secret_email: token,
-        verification_token_expiry_email: next30Minutes.toISOString(),
+        verification_token_expiry_email: next2Minutes.toISOString(),
         password: hashedPassword,
       },
     });
 
-    return res.status(200).json({
+    return res.status(201).json({
       success: true,
-      message:
-        "Verification code has been sent your email you need to verify yourself.",
+      message: "User registered successfully",
+      details_added: user.details_added,
+      verified: user.verified,
+      email_verified: user.email_verified,
     });
   } catch (err) {
     logger.error(`Error in registering the user: ${err}`);
@@ -274,6 +279,13 @@ export const login: RequestHandler = async (req: Request, res: Response) => {
       });
     }
 
+    if (!user.email_verified) {
+      return res.status(400).json({
+        success: false,
+        message: "your email is not verified",
+      });
+    }
+
     await sendTokenCookie(res, user.username);
 
     return res.status(201).json({
@@ -285,6 +297,184 @@ export const login: RequestHandler = async (req: Request, res: Response) => {
     });
   } catch (err) {
     logger.error(`Error in login: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const verifyEmail: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const {
+      code,
+    }: {
+      code: string;
+    } = req.body;
+
+    let { email }: { email: string } = req.body;
+
+    if (!code.trim() || !email.trim() || code.length < 6) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid inputs" });
+    }
+
+    if (!validateEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "Email that you provided is not valid",
+      });
+    }
+
+    let user = await prisma.user.findFirst({
+      where: { email: email },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "user does not exists with this email",
+      });
+    }
+
+    if (user.email_verified) {
+      return res
+        .status(400)
+        .json({ success: false, message: "user is already verified" });
+    }
+
+    const verification_token = crypto
+      .createHash("sha256")
+      .update(code + user.verification_secret_email)
+      .digest("hex");
+
+    if (user.verification_token_email !== verification_token) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Code did not match" });
+    }
+
+    if (Date.now() > new Date(user.verification_token_expiry_email).getTime()) {
+      await prisma.user.update({
+        where: { email: email },
+        data: {
+          verification_secret_email: null,
+          verification_token_email: null,
+          verification_token_expiry_email: null,
+        },
+      });
+      return res.status(400).json({
+        success: false,
+        message:
+          "Your verification token is expired not valid try resending the code",
+      });
+    }
+
+    await prisma.user.update({
+      where: { email: email },
+      data: {
+        email_verified: true,
+        verification_secret_email: null,
+        verification_token_email: null,
+        verification_token_expiry_email: null,
+        details_added: user.details_added,
+      },
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Verified User successfully" });
+  } catch (err) {
+    logger.error(`Error in verifying the email: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const resendCodeToEmail: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    let { email }: { email: string } = req.body;
+
+    if (!email.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid inputs" });
+    }
+
+    if (!validateEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "Email that you provided is not valid",
+      });
+    }
+
+    const user = await prisma.user.findFirst({ where: { email: email } });
+
+    if (user.email_verified) {
+      return res.status(400).json({
+        success: false,
+        message: "user is already verified",
+      });
+    }
+
+    if (user.verification_token_expiry_email) {
+      const now = new Date();
+      const expiry = new Date(user.verification_token_expiry_email);
+
+      if (now < expiry) {
+        const remainingSeconds = Math.ceil(
+          (expiry.getTime() - now.getTime()) / 1000
+        );
+
+        return res.status(400).json({
+          success: false,
+          message: `A verification code is already sent. Try again after ${remainingSeconds} seconds.`,
+        });
+      }
+    }
+
+    const { verificationToken, token, code } = generateVerificationCode();
+
+    const currentDate = new Date();
+    const next2Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
+
+    console.log(code);
+
+    // const mailOptions = {
+    //   from: process.env.EMAIL_FROM,
+    //   to: email,
+    //   subject: "Hello from CourseX",
+    //   text: "Verify your Email",
+    //   html: `<h1>Your verification code is: ${code}</h1></br><p>Click on the link given below:<a>https://coursex.us/app/verification/${email}/verify</a></p>`,
+    // };
+
+    // await email_transporter.sendMail(mailOptions);
+
+    await prisma.user.update({
+      where: { email: email },
+      data: {
+        verification_secret_email: token,
+        verification_token_email: verificationToken,
+        verification_token_expiry_email: next2Minutes.toISOString(),
+      },
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Verification code sent successfully" });
+  } catch (err) {
+    logger.error(`Error in sending the verification code: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }
@@ -571,6 +761,30 @@ export const sendVerificationCodeToPhoneNumber: RequestHandler = async (
       });
     }
 
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    if (
+      !user.sms_attempts_reset_at ||
+      new Date(user.sms_attempts_reset_at) < todayStart
+    ) {
+      await prisma.user.update({
+        where: { username },
+        data: {
+          sms_attempts_today: 0,
+          sms_attempts_reset_at: todayStart.toISOString(),
+        },
+      });
+    }
+
+    if (user.sms_attempts_today >= 5) {
+      return res.status(429).json({
+        success: false,
+        message:
+          "Too many verification attempts today. Please try again tomorrow.",
+      });
+    }
+
     if (user.verification_token_expiry) {
       const now = new Date();
       const expiry = new Date(user.verification_token_expiry);
@@ -605,6 +819,7 @@ export const sendVerificationCodeToPhoneNumber: RequestHandler = async (
         verification_token: verificationToken,
         verification_token_expiry: next2Minutes.toISOString(),
         phone_number: phone_number,
+        sms_attempts_today: user.sms_attempts_today + 1,
       },
     });
 
