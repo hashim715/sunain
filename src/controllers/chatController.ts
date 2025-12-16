@@ -523,11 +523,10 @@ export const chatController = async (
           const { meetingName, userName } = data;
 
           // Verify session exists in database
+          // Get the highest recording number for this meeting
           const session = await prisma.recordingSession.findFirst({
-            where: {
-              meetingName: meetingName,
-              isRecording: true,
-            },
+            where: { meetingName },
+            orderBy: { recordingNumber: "desc" },
           });
 
           const recordingNumber = session.recordingNumber;
