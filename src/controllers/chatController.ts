@@ -189,14 +189,18 @@ export const chatController = async (
     metadata: RecordingMetadata
   ): Promise<void> => {
     const key = REDIS_KEYS.sessionRecordings(meetingName, recordingNumber);
-    const existing = await redis.get(key);
 
-    let recordings: RecordingMetadata[] = existing ? JSON.parse(existing) : [];
-    recordings.push(metadata);
+    // ✅ Use RPUSH (atomic append) instead of GET+SET
+    await redis.rpush(key, JSON.stringify(metadata));
 
-    await redis.set(key, JSON.stringify(recordings), "EX", 172800); // 48 hours
+    // Set expiry on first insert
+    await redis.expire(key, 172800); // 48 hours
+
+    // Get count atomically
+    const count = await redis.llen(key);
+
     console.log(
-      `📝 Added recording metadata for ${metadata.userName} in session ${recordingNumber}`
+      `📝 Added recording metadata for ${metadata.userName} in session ${recordingNumber} (${count} total)`
     );
   };
 
@@ -205,8 +209,11 @@ export const chatController = async (
     recordingNumber: number
   ): Promise<RecordingMetadata[]> => {
     const key = REDIS_KEYS.sessionRecordings(meetingName, recordingNumber);
-    const data = await redis.get(key);
-    return data ? JSON.parse(data) : [];
+
+    // ✅ Get all list items
+    const items = await redis.lrange(key, 0, -1);
+
+    return items.map((item) => JSON.parse(item));
   };
 
   const deleteSessionRecordings = async (
