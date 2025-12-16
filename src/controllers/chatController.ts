@@ -552,9 +552,6 @@ export const chatController = async (
               meetingName,
               isRecording: true, // Only active sessions
             },
-            orderBy: {
-              recordingNumber: "desc", // Highest number first
-            },
           });
 
           if (!session) {
