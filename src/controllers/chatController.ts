@@ -379,12 +379,28 @@ export const chatController = async (
   /**
    * Close and cleanup write stream for socket
    */
-  const closeWriteStream = (socketId: string): void => {
-    const stream = activeWriteStreams.get(socketId);
-    if (stream) {
-      stream.end();
-      activeWriteStreams.delete(socketId);
-    }
+  // Update closeWriteStream to return a Promise
+  const closeWriteStream = (socketId: string): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      const stream = activeWriteStreams.get(socketId);
+
+      if (!stream) {
+        resolve(); // No stream to close
+        return;
+      }
+
+      // Wait for stream to finish writing
+      stream.end((err: any) => {
+        if (err) {
+          console.error(`❌ Error closing stream for ${socketId}:`, err);
+          reject(err);
+        } else {
+          activeWriteStreams.delete(socketId);
+          console.log(`✅ Stream closed and flushed for ${socketId}`);
+          resolve();
+        }
+      });
+    });
   };
 
   const updateMeeting = async (meetingName: string) => {
@@ -637,12 +653,6 @@ export const chatController = async (
 
           console.log(`🛑 Stop request from ${userName}`);
 
-          if (socketId === null) {
-            closeWriteStream(socket.id);
-          } else {
-            closeWriteStream(socketId);
-          }
-
           const streamInfo = await getAudioStreamInfo(meetingName, userName);
 
           if (!streamInfo) {
@@ -653,7 +663,15 @@ export const chatController = async (
             return;
           }
 
-          // ✅ Use the recording number that was stored when stream started
+          // ✅ WAIT for stream to close and flush to disk
+          if (socketId === null) {
+            await closeWriteStream(socket.id);
+          } else {
+            await closeWriteStream(socketId);
+          }
+
+          console.log(`✅ Stream flushed to disk for ${userName}`);
+
           const recordingNumber = streamInfo.recordingNumber;
 
           console.log(`🔍 Stream info:`, {
@@ -662,23 +680,40 @@ export const chatController = async (
             filepath: streamInfo.filepath,
           });
 
+          // Add a small delay to ensure filesystem sync (especially in Docker)
+          await new Promise((resolve) => setTimeout(resolve, 100));
+
           // Verify file exists
           if (!fs.existsSync(streamInfo.filepath)) {
             console.error(`❌ File not found: ${streamInfo.filepath}`);
+
+            // List directory contents for debugging
+            const dir = path.dirname(streamInfo.filepath);
+            if (fs.existsSync(dir)) {
+              const files = fs.readdirSync(dir);
+              console.log(`📁 Directory contents:`, files);
+            } else {
+              console.log(`📁 Directory doesn't exist: ${dir}`);
+            }
+
             throw new Error(`Recording file not found: ${streamInfo.filepath}`);
           }
 
           const stats = fs.statSync(streamInfo.filepath);
           console.log(
-            `✅ File exists: ${streamInfo.filepath} (${stats.size} bytes)`
+            `✅ File verified: ${streamInfo.filepath} (${stats.size} bytes)`
           );
+
+          // Check if file has content
+          if (stats.size === 0) {
+            console.warn(`⚠️ File is empty: ${streamInfo.filepath}`);
+          }
 
           const duration = Date.now() - streamInfo.startedAt;
 
-          // Store recording metadata
           const recordingMetadata: RecordingMetadata = {
             meetingName,
-            recordingNumber, // ✅ From streamInfo, not from DB query
+            recordingNumber,
             userName,
             filepath: streamInfo.filepath,
             participantNumber: streamInfo.participantNumber,
@@ -702,10 +737,9 @@ export const chatController = async (
           await deleteAudioStream(meetingName, userName);
 
           console.log(
-            `🛑 Recording #${recordingNumber} stopped for ${userName} (${duration}ms)`
+            `🛑 Recording #${recordingNumber} stopped for ${userName} (${duration}ms, ${stats.size} bytes)`
           );
 
-          // Get session info
           const session = await prisma.recordingSession.findFirst({
             where: {
               meetingName,
@@ -720,7 +754,6 @@ export const chatController = async (
             return;
           }
 
-          // Check if all participants have stopped recording for this session
           const sessionRecordings = await getSessionRecordings(
             meetingName,
             recordingNumber
@@ -735,7 +768,6 @@ export const chatController = async (
               `✅ All ${sessionRecordings.length} recordings complete for session ${recordingNumber}`
             );
 
-            // Verify all files exist before queueing
             console.log("🔍 Verifying all files before queueing...");
             for (const rec of sessionRecordings) {
               if (!fs.existsSync(rec.filepath)) {
@@ -748,7 +780,6 @@ export const chatController = async (
               );
             }
 
-            // Queue the processing job
             await localRecordingQueue.add(
               "process-local-recording",
               {
@@ -767,7 +798,7 @@ export const chatController = async (
             );
           } else {
             console.log(
-              `⏳ Waiting for more recordings: ${sessionRecordings.length}/${session.participantCount}`
+              `⏳ Waiting: ${sessionRecordings.length}/${session.participantCount}`
             );
           }
 
