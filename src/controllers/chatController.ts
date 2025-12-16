@@ -787,22 +787,37 @@ export const chatController = async (
               );
             }
 
-            await localRecordingQueue.add(
-              "process-local-recording",
-              {
-                meetingName,
-                recordingNumber,
-                recordings: sessionRecordings,
-              },
-              {
-                jobId: `local-${meetingName}-${recordingNumber}-${Date.now()}`,
-                priority: 1,
-              }
-            );
+            // ✅ Fixed jobId without timestamp - Bull prevents duplicates
+            const jobId = `local-${meetingName}-${recordingNumber}`;
 
-            console.log(
-              `🎯 Queued processing for ${meetingName} recording ${recordingNumber}`
-            );
+            try {
+              await localRecordingQueue.add(
+                "process-local-recording",
+                {
+                  meetingName,
+                  recordingNumber,
+                  recordings: sessionRecordings,
+                },
+                {
+                  jobId, // Same ID = Bull rejects duplicate
+                  priority: 1,
+                }
+              );
+
+              console.log(
+                `🎯 Queued processing for ${meetingName} recording ${recordingNumber}`
+              );
+            } catch (error: any) {
+              // Bull throws if duplicate job already exists
+              if (
+                error.message?.includes("already exists") ||
+                error.message?.includes("duplicate")
+              ) {
+                console.log(`⏭️ Job already queued, skipping`);
+              } else {
+                throw error;
+              }
+            }
           } else {
             console.log(
               `⏳ Waiting: ${sessionRecordings.length}/${session.participantCount}`
