@@ -310,6 +310,8 @@ export const chatController = async (
                 message: "Participant disconnected and didn't reconnect.",
                 meetingName,
                 zoomUserId,
+                userName: session.userName,
+                socketId: session.socketId,
               });
 
               await deleteUserSession(meetingName, zoomUserId);
@@ -616,11 +618,19 @@ export const chatController = async (
 
     socket.on(
       "stop-audio-stream",
-      async (data: { meetingName: string; userName: string }) => {
+      async (data: {
+        meetingName: string;
+        userName: string;
+        socketId: string | null;
+      }) => {
         try {
-          const { meetingName, userName } = data;
+          const { meetingName, userName, socketId } = data;
 
-          closeWriteStream(socket.id);
+          if (socketId === null) {
+            closeWriteStream(socket.id);
+          } else {
+            closeWriteStream(socketId);
+          }
 
           const streamInfo = await getAudioStreamInfo(meetingName, userName);
 
