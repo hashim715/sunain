@@ -674,11 +674,7 @@ export const chatController = async (
             recordingNumber
           );
 
-          const meeting = await prisma.meeting.findUnique({
-            where: { sessionName: meetingName },
-          });
-
-          if (sessionRecordings.length === meeting?.participantCount) {
+          if (sessionRecordings.length === lastSession.participantCount) {
             console.log(
               `✅ All ${sessionRecordings.length} recordings complete for session ${recordingNumber}`
             );
@@ -702,7 +698,7 @@ export const chatController = async (
             );
           } else {
             console.log(
-              `⏳ Waiting for more recordings: ${sessionRecordings.length}/${meeting?.participantCount}`
+              `⏳ Waiting for more recordings: ${sessionRecordings.length}/${lastSession.participantCount}`
             );
           }
 
