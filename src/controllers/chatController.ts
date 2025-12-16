@@ -550,7 +550,10 @@ export const chatController = async (
           const session = await prisma.recordingSession.findFirst({
             where: {
               meetingName,
-              isRecording: true, // ✅ Get the ACTIVE one, not just latest
+              isRecording: true, // Only active sessions
+            },
+            orderBy: {
+              recordingNumber: "desc", // Highest number first
             },
           });
 
@@ -1067,9 +1070,8 @@ localRecordingQueue.process("process-local-recording", async (job: any) => {
       },
     });
 
-    // Generate folder name
-    const now = new Date();
-    const folder_name = now
+    // ✅ Generate folder name from meeting createdAt
+    const folder_name = meeting.createdAt
       .toLocaleString("en-CA", {
         timeZone: "America/Los_Angeles",
         year: "numeric",
@@ -1082,6 +1084,8 @@ localRecordingQueue.process("process-local-recording", async (job: any) => {
       .replace(/,/g, "")
       .replace(/\s+/g, "-")
       .toLowerCase();
+
+    console.log(`📁 Using folder from meeting createdAt: ${folder_name}`);
 
     const s3Bucket = process.env.S3_BUCKET_NAME!;
 
