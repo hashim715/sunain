@@ -951,7 +951,7 @@ export const chatController = async (
     socket.on("disconnect", async (reason) => {
       console.log(`🔌 Socket disconnected: ${socket.id}, reason: ${reason}`);
 
-      closeWriteStream(socket.id);
+      // closeWriteStream(socket.id);
 
       try {
         const userInfo = await getUserSessionBySocketId(socket.id);
@@ -963,7 +963,7 @@ export const chatController = async (
         const { session, meetingName, zoomUserId } = userInfo;
         const { userName } = session;
 
-        await deleteAudioStream(meetingName, userName);
+        // await deleteAudioStream(meetingName, userName);
 
         const currentSession = await getUserSession(meetingName, zoomUserId);
 
