@@ -38,6 +38,8 @@ COPY package*.json ./
 RUN npm cache clean --force
 RUN npm install --omit=dev
 
+# Copy complete Twilio package from builder (it's broken when reinstalled)
+COPY --from=builder /app/node_modules/twilio ./node_modules/twilio
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
 
