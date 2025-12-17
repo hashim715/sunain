@@ -11,7 +11,8 @@ COPY package*.json ./
 
 # Install ALL dependencies (including dev) for build
 RUN npm cache clean --force
-RUN npm install
+RUN npm ci
+# RUN npm install
 
 # Copy full source
 COPY . .
@@ -36,7 +37,8 @@ COPY package*.json ./
 
 # Install ONLY production dependencies
 RUN npm cache clean --force
-RUN npm install --omit=dev
+# RUN npm install --omit=dev
+RUN npm ci
 
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
