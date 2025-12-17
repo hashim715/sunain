@@ -30,21 +30,24 @@ WORKDIR /app
 # Install OpenSSL in production (required at runtime)
 RUN apt-get update -y && apt-get install -y openssl && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Copy package files
-COPY package*.json ./
+# Copy built files from builder
+COPY --from=builder /app/dist ./dist
 
 # Copy complete node_modules from builder
 COPY --from=builder /app/node_modules ./node_modules
 
-# Copy built files from builder
-COPY --from=builder /app/dist ./dist
-
 # Copy Prisma schema + migrations folder
 COPY --from=builder /app/prisma ./prisma
+
+# Copy package files
+COPY --from=builder /app/package*.json ./
 
 # Copy migration script
 COPY scripts/migrate-and-start.sh ./scripts/
 RUN chmod +x ./scripts/migrate-and-start.sh
+
+# DEBUG: Check what's in twilio folder
+RUN ls -la /app/node_modules/twilio/
 
 # Fix permissions
 RUN chown -R node:node /app
