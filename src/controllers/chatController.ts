@@ -56,7 +56,7 @@ export const localRecordingQueue = new Queue("local-recordings", {
   },
   defaultJobOptions: {
     attempts: 5,
-    backoff: { type: "exponential", delay: 5000 },
+    backoff: { type: "exponential", delay: 120000 },
     removeOnComplete: 100,
     removeOnFail: 500,
   },
@@ -89,9 +89,6 @@ export const chatController = async (
 
   const REDIS_KEYS = {
     meetingState: (meetingName: string) => `meeting:${meetingName}:state`,
-
-    meetingRecording: (meetingName: string) =>
-      `meeting:${meetingName}:recording`,
 
     userSession: (meetingName: string, zoomUserId: string) =>
       `session:${meetingName}:${zoomUserId}`,
@@ -128,28 +125,8 @@ export const chatController = async (
     );
   };
 
-  const setMeetingRecordingState = async (
-    meetingName: string,
-    isRecording: boolean
-  ): Promise<void> => {
-    await redis.set(
-      REDIS_KEYS.meetingRecording(meetingName),
-      isRecording ? "true" : "false",
-      "EX",
-      86400
-    );
-  };
-
-  const getMeetingRecordingState = async (
-    meetingName: string
-  ): Promise<boolean> => {
-    const state = await redis.get(REDIS_KEYS.meetingRecording(meetingName));
-    return state === "true";
-  };
-
   const deleteMeetingData = async (meetingName: string): Promise<void> => {
     await redis.del(REDIS_KEYS.meetingState(meetingName));
-    await redis.del(REDIS_KEYS.meetingRecording(meetingName));
   };
 
   const setUserSession = async (
@@ -227,28 +204,30 @@ export const chatController = async (
    * Reverse lookup: socket -> user session
    * Used only on disconnect (infrequent operation)
    */
-  const getUserSessionBySocketId = async (
-    socketId: string
-  ): Promise<{
-    session: UserSession;
-    meetingName: string;
-    zoomUserId: string;
-  } | null> => {
+  const getUserSessionBySocketId = async (socketId: string) => {
     const pattern = "session:*";
     const keys = await redis.keys(pattern);
 
     for (const key of keys) {
-      const data = await redis.get(key);
-      if (data) {
-        const session: UserSession = JSON.parse(data);
-        if (session.socketId === socketId) {
-          const parts = key.split(":");
-          return {
-            session,
-            meetingName: parts[1],
-            zoomUserId: parts[2],
-          };
+      if (key.includes("recordings")) {
+        continue;
+      }
+
+      try {
+        const data = await redis.get(key);
+        if (data) {
+          const session: UserSession = JSON.parse(data);
+          if (session.socketId === socketId) {
+            const parts = key.split(":");
+            return {
+              session,
+              meetingName: parts[1],
+              zoomUserId: parts[2],
+            };
+          }
         }
+      } catch (error) {
+        continue; // Skip problematic keys
       }
     }
     return null;
@@ -930,7 +909,6 @@ export const chatController = async (
     });
 
     socket.on("recording-stopped", async (data) => {
-      await setMeetingRecordingState(data.meetingName, false);
       socket.to(data.meetingName).emit("recording-stopped", data);
       console.log(`🎬 Recording stoped in ${data.meetingName}`);
     });
