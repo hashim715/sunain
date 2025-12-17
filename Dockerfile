@@ -10,7 +10,6 @@ RUN apt-get update -y && apt-get install -y openssl && apt-get clean && rm -rf /
 COPY package*.json ./
 
 # Install ALL dependencies (including dev) for build
-RUN npm cache clean --force
 RUN npm install
 
 # Copy full source
@@ -34,18 +33,13 @@ RUN apt-get update -y && apt-get install -y openssl && apt-get clean && rm -rf /
 # Copy package files
 COPY package*.json ./
 
-# Install ONLY production dependencies
-RUN npm cache clean --force
-RUN npm install --omit=dev
+# Copy complete node_modules from builder
+COPY --from=builder /app/node_modules ./node_modules
 
-# Copy complete Twilio package from builder (it's broken when reinstalled)
-COPY --from=builder /app/node_modules/twilio ./node_modules/twilio
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
 
-# Copy Prisma schema + generated client + migrations folder
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+# Copy Prisma schema + migrations folder
 COPY --from=builder /app/prisma ./prisma
 
 # Copy migration script
