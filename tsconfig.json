@@ -5,8 +5,7 @@
     "sourceMap": true,
     "target": "ES2017",
     "resolveJsonModule": true,
-    "noImplicitAny": true,
-    "skipLibCheck": true
+    "noImplicitAny": true
   },
   "include": ["./src/**/*"],
   "exclude": ["node_modules"]
