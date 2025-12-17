@@ -10,6 +10,7 @@ RUN apt-get update -y && apt-get install -y openssl && apt-get clean && rm -rf /
 COPY package*.json ./
 
 # Install ALL dependencies (including dev) for build
+RUN npm cache clean --force
 RUN npm install
 
 # Copy full source
@@ -34,6 +35,7 @@ RUN apt-get update -y && apt-get install -y openssl && apt-get clean && rm -rf /
 COPY package*.json ./
 
 # Install ONLY production dependencies
+RUN npm cache clean --force
 RUN npm install --omit=dev
 
 # Copy built files from builder
