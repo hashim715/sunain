@@ -29,9 +29,6 @@ coverage
 # Ignore log files:
 *.log
 
-# Ignore package-lock.json files also
-package-lock.json
-
 # Ignore the dashboard and client apps
 testing-frontend
 
