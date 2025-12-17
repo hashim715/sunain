@@ -10,6 +10,7 @@ RUN apt-get update -y && apt-get install -y openssl && apt-get clean && rm -rf /
 COPY package*.json ./
 
 # Install ALL dependencies (including dev) for build
+RUN rm -rf node_modules package-lock.json
 RUN npm install
 
 # Copy full source
@@ -45,9 +46,6 @@ COPY --from=builder /app/package*.json ./
 # Copy migration script
 COPY scripts/migrate-and-start.sh ./scripts/
 RUN chmod +x ./scripts/migrate-and-start.sh
-
-# DEBUG: Check what's in twilio folder
-RUN ls -la /app/node_modules/twilio/
 
 # Fix permissions
 RUN chown -R node:node /app
