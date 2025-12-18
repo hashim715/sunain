@@ -10,16 +10,16 @@ dotenv.config();
 
 export const login: RequestHandler = async (req: Request, res: Response) => {
   try {
-    const { username, password } = req.body;
+    const { email, password } = req.body;
 
-    if (!username || !password) {
+    if (!email || !password) {
       return res
         .status(400)
         .json({ success: false, message: "Please provide valid inputs" });
     }
 
     let user = await prisma.user.findFirst({
-      where: { username: username },
+      where: { email: email },
     });
 
     if (!user || user.user_type !== "admin") {
@@ -47,12 +47,9 @@ export const login: RequestHandler = async (req: Request, res: Response) => {
 
     await sendTokenCookie(res, user.username);
 
-    return res.status(201).json({
+    return res.status(200).json({
       success: true,
       message: "Logged in successfully",
-      details_added: user.details_added,
-      verified: user.verified,
-      email_verified: user.email_verified,
     });
   } catch (err) {
     logger.error(`Error in login: ${err}`);
@@ -74,6 +71,7 @@ export const getUsersWaitList: RequestHandler = async (
         adminVerify: "waiting",
         details_added: true,
         verified: true,
+        email_verified: true,
       },
       select: {
         id: true,
@@ -585,7 +583,7 @@ export const getAllUsers: RequestHandler = async (
 
       const age = user.date_of_birth ? calculateAge(user.date_of_birth) : null;
 
-      const status = user.adminVerify ? "active" : "suspended";
+      const status = user.adminVerify;
 
       return {
         user_id: `${user.id}`,
@@ -602,6 +600,10 @@ export const getAllUsers: RequestHandler = async (
         average_quality_score: parseFloat(averageQualityScore.toFixed(2)),
         status: status,
         stripe_account_id: user.stripeAccountId || "N/A",
+        stripeOnboardingComplete: user.stripeOnboardingComplete,
+        stripeDetailsSubmitted: user.stripeDetailsSubmitted,
+        stripeChargesEnabled: user.stripeChargesEnabled,
+        stripePayoutsEnabled: user.stripePayoutsEnabled,
       };
     });
 

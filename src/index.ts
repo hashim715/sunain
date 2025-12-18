@@ -175,8 +175,8 @@ const start = async (): Promise<void> => {
     }
 
     // Schedule cleanup job to run every 10 minutes
-    // cron.schedule("*/10 * * * *", cleanupUnverifiedAccounts);
-    // logger.info("⏰ Scheduled cleanup job every 10 minutes");
+    cron.schedule("*/10 * * * *", cleanupUnverifiedAccounts);
+    logger.info("⏰ Scheduled cleanup job every 10 minutes");
 
     server.listen(PORT, (): void => {
       logger.info(`Listening on port ${PORT}`);
