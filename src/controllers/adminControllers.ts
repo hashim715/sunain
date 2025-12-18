@@ -695,7 +695,8 @@ export const getAllLanguageStats: RequestHandler = async (
 
     const languageStats = await Promise.all(
       meetings.map(async (meeting) => {
-        const stats = await prisma.conversation.aggregate({
+        // Get all conversations for this language
+        const conversations = await prisma.conversation.findMany({
           where: {
             meeting: {
               language: meeting.language,
@@ -703,24 +704,34 @@ export const getAllLanguageStats: RequestHandler = async (
             status: "completed",
             flagged_status: false,
           },
-          _sum: {
+          select: {
+            meetingId: true,
             duration: true,
-          },
-          _count: {
-            id: true,
           },
         });
 
-        const totalDurationSeconds = stats._sum.duration
-          ? parseFloat(stats._sum.duration.toString())
-          : 0;
+        // Group by meetingId and take only one duration per meeting
+        const uniqueMeetings = new Map<number, number>();
+        conversations.forEach((conv) => {
+          if (!uniqueMeetings.has(conv.meetingId)) {
+            uniqueMeetings.set(
+              conv.meetingId,
+              parseFloat(conv.duration.toString())
+            );
+          }
+        });
+
+        const totalDurationSeconds = Array.from(uniqueMeetings.values()).reduce(
+          (sum, duration) => sum + duration,
+          0
+        );
 
         const totalHours = parseFloat((totalDurationSeconds / 3600).toFixed(2));
 
         return {
           language: meeting.language,
           total_hours: totalHours,
-          total_conversations: stats._count.id,
+          total_conversations: conversations.length,
         };
       })
     );
