@@ -212,7 +212,7 @@ export const flaggedConversations: RequestHandler = async (
           conversation_id: `${conv.id}`,
           participant_1_id: `user_${conv.userId}`,
           participant_2_id: otherParticipant
-            ? `user_${otherParticipant.userId}`
+            ? `user_${otherParticipant.user.id}`
             : "N/A",
           language: conv.meeting.language,
           duration_seconds: durationSeconds,
@@ -548,6 +548,7 @@ export const getAllUsers: RequestHandler = async (
       orderBy: {
         createdAt: "desc",
       },
+      where: { user_type: "user" },
     });
 
     const formattedUsers = users.map((user) => {
