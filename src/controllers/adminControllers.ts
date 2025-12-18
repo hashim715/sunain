@@ -731,7 +731,7 @@ export const getAllLanguageStats: RequestHandler = async (
         return {
           language: meeting.language,
           total_hours: totalHours,
-          total_conversations: conversations.length,
+          total_conversations: uniqueMeetings.size, // Count unique meetings instead
         };
       })
     );
