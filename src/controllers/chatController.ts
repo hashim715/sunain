@@ -2712,9 +2712,9 @@ export const chatController = async (
         console.log(`🎬 Server recording session started for ${meetingName}`);
 
         // ✅ ADD THIS: Start monitoring for stalled streams
-        const monitorInterval = startChunkMonitoring(meetingName);
-        serverRecordingSessions.set(meetingName, { monitorInterval });
-        console.log(`👀 Started chunk monitoring for ${meetingName}`);
+        // const monitorInterval = startChunkMonitoring(meetingName);
+        // serverRecordingSessions.set(meetingName, { monitorInterval });
+        // console.log(`👀 Started chunk monitoring for ${meetingName}`);
 
         io.to(meetingName).emit("recording-started", data);
       } catch (error) {
