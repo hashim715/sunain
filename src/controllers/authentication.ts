@@ -246,6 +246,8 @@ export const login: RequestHandler = async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
 
+    console.log(email, password);
+
     if (!email || !password) {
       return res
         .status(400)
@@ -264,7 +266,7 @@ export const login: RequestHandler = async (req: Request, res: Response) => {
     });
 
     if (!user) {
-      return res.status(400).json({
+      return res.status(404).json({
         success: false,
         message: "User with that email does not exists",
       });
@@ -288,7 +290,7 @@ export const login: RequestHandler = async (req: Request, res: Response) => {
 
     await sendTokenCookie(res, user.username);
 
-    return res.status(201).json({
+    return res.status(200).json({
       success: true,
       message: "Logged in successfully",
       details_added: user.details_added,
