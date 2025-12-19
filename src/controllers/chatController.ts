@@ -259,10 +259,6 @@ export const chatController = async (
     await redis.del(REDIS_KEYS.pendingDisconnect(meetingName, userName));
   };
 
-  /**
-   * Background worker for disconnect cleanup
-   * Runs on all server instances, Redis coordinates state
-   */
   const startDisconnectCleanupWorker = () => {
     setInterval(async () => {
       try {
@@ -283,7 +279,20 @@ export const chatController = async (
 
             const session = await getUserSession(meetingName, userName);
 
-            if (!session || session.socketId === socketId) {
+            if (!session) {
+              console.log(
+                `⏰ Grace period expired for ${userName} in ${meetingName}`
+              );
+
+              io.to(meetingName).emit("refresh-participants-required", {
+                message: "Participant disconnected and didn't reconnect.",
+                meetingName,
+                userName,
+                socketId,
+              });
+
+              await clearPendingDisconnect(meetingName, userName);
+            } else if (session.socketId === socketId) {
               console.log(
                 `⏰ Grace period expired for ${userName} in ${meetingName}`
               );
@@ -298,6 +307,12 @@ export const chatController = async (
               await deleteUserSession(meetingName, userName);
               await clearPendingDisconnect(meetingName, userName);
             } else {
+              io.to(meetingName).emit("refresh-participants-required", {
+                message: "Participant disconnected and didn't reconnect.",
+                meetingName,
+                userName: session.userName,
+                socketId: session.socketId,
+              });
               await clearPendingDisconnect(meetingName, userName);
             }
           }
