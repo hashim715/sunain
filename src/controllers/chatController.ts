@@ -2407,6 +2407,11 @@ export const chatController = async (
                 }
               );
 
+              await prisma.recordingSession.update({
+                where: { id: session.id },
+                data: { status: "completed", isRecording: false },
+              });
+
               console.log(
                 `🎯 Queued processing for recording ${recordingNumber}`
               );
