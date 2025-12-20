@@ -392,6 +392,17 @@ export const chatController = async (
                 // SAVE METADATA FOR THE DISCONNECTED USER
                 const recordingNumber = streamInfo.recordingNumber;
 
+                // ✅ GET CHUNK TIMESTAMPS
+                const chunkTimestamps = await getChunkTimestamps(
+                  meetingName,
+                  userName,
+                  recordingNumber
+                );
+
+                console.log(
+                  `📊 ${userName} sent ${chunkTimestamps.length} chunks`
+                );
+
                 // Verify file exists
                 if (fs.existsSync(streamInfo.filepath)) {
                   const stats = fs.statSync(streamInfo.filepath);
@@ -406,6 +417,7 @@ export const chatController = async (
                     startTime: new Date(streamInfo.startedAt),
                     endTime: new Date(),
                     disconnectionPeriods: disconnectionLog, // ✅ Add disconnect log
+                    chunkTimestamps, // ✅ ADD CHUNK TIMING DATA
                   };
 
                   console.log(`📝 Auto-saving metadata for ${userName}:`, {
