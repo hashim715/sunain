@@ -2358,7 +2358,10 @@ export const chatController = async (
 
           if (count === session.participantCount) {
             await prisma.recordingSession.update({
-              where: { id: session.id },
+              where: {
+                meetingName_recordingNumber: { meetingName, recordingNumber },
+                isRecording: true,
+              },
               data: { status: "completed", isRecording: false },
             });
 
