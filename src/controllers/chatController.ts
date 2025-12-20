@@ -1631,7 +1631,11 @@ export const chatController = async (
                         where: {
                           id: recordingSession.id,
                         },
-                        data: { status: "completed", isRecording: false },
+                        data: {
+                          status: "completed",
+                          isRecording: false,
+                          recordingEndTime: new Date(),
+                        },
                       });
 
                       console.log(
@@ -2418,7 +2422,11 @@ export const chatController = async (
                 where: {
                   id: session.id,
                 },
-                data: { status: "completed", isRecording: false },
+                data: {
+                  status: "completed",
+                  isRecording: false,
+                  recordingEndTime: new Date(),
+                },
               });
 
               console.log(
