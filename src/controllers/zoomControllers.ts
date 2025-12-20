@@ -31,6 +31,7 @@ export const startRecordingSession: RequestHandler = async (req, res) => {
       recordingNumber: nextRecordingNumber,
     });
   } catch (error) {
+    console.log(error);
     return res.status(500).json({ message: "Failed to start recording" });
   } finally {
     await prisma.$disconnect();
@@ -356,12 +357,10 @@ export const joinMeeting: RequestHandler = async (
 
     if (existingMeeting.participants.length === 2) {
       if (!meetingParticipant) {
-        return res
-          .status(400)
-          .json({
-            success: false,
-            message: "meeting already occupied by two participants",
-          });
+        return res.status(400).json({
+          success: false,
+          message: "meeting already occupied by two participants",
+        });
       }
     }
 

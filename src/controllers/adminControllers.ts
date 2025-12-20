@@ -695,7 +695,7 @@ export const getAllLanguageStats: RequestHandler = async (
 
     const languageStats = await Promise.all(
       meetings.map(async (meeting) => {
-        // Get all conversations for this language
+        // Get all conversations with their recording details
         const conversations = await prisma.conversation.findMany({
           where: {
             meeting: {
@@ -707,31 +707,38 @@ export const getAllLanguageStats: RequestHandler = async (
           select: {
             meetingId: true,
             duration: true,
+            recording: {
+              select: {
+                recordingNumber: true,
+              },
+            },
           },
         });
 
-        // Group by meetingId and take only one duration per meeting
-        const uniqueMeetings = new Map<number, number>();
+        // Group by meetingId + recordingNumber combination
+        const uniqueRecordings = new Map<string, number>();
+
         conversations.forEach((conv) => {
-          if (!uniqueMeetings.has(conv.meetingId)) {
-            uniqueMeetings.set(
-              conv.meetingId,
-              parseFloat(conv.duration.toString())
-            );
+          if (conv.recording) {
+            // Create unique key: meetingId-recordingNumber
+            const key = `${conv.meetingId}-${conv.recording.recordingNumber}`;
+
+            if (!uniqueRecordings.has(key)) {
+              uniqueRecordings.set(key, parseFloat(conv.duration.toString()));
+            }
           }
         });
 
-        const totalDurationSeconds = Array.from(uniqueMeetings.values()).reduce(
-          (sum, duration) => sum + duration,
-          0
-        );
+        const totalDurationSeconds = Array.from(
+          uniqueRecordings.values()
+        ).reduce((sum, duration) => sum + duration, 0);
 
         const totalHours = parseFloat((totalDurationSeconds / 3600).toFixed(2));
 
         return {
           language: meeting.language,
           total_hours: totalHours,
-          total_conversations: uniqueMeetings.size, // Count unique meetings instead
+          total_recordings: uniqueRecordings.size,
         };
       })
     );

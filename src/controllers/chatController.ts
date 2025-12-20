@@ -1256,11 +1256,10 @@ interface MeetingState {
 
 interface UserSession {
   meetingName: string;
-  userName: string;
   isHost: boolean;
   sessionID: string;
   jwtToken: string;
-  zoomUserId: string;
+  userName: string;
   socketId: string;
   lastSeen: number;
 }
@@ -1280,6 +1279,11 @@ interface RecordingMetadata {
   participantNumber: number;
   startTime: Date;
   endTime: Date;
+  disconnectionPeriods?: Array<{
+    disconnectTime: number;
+    reconnectTime: number | null;
+    duration: number | null;
+  }>;
 }
 
 export const localRecordingQueue = new Queue("local-recordings", {
@@ -1294,6 +1298,9 @@ export const localRecordingQueue = new Queue("local-recordings", {
     removeOnFail: 500,
   },
 });
+
+const activeWriteStreams = new Map<string, fs.WriteStream>();
+const recentlyStoppedStreams = new Map<string, number>();
 
 export const chatController = async (
   app: Application,
@@ -1318,16 +1325,14 @@ export const chatController = async (
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
 
-  const activeWriteStreams = new Map<string, fs.WriteStream>();
-
   const REDIS_KEYS = {
     meetingState: (meetingName: string) => `meeting:${meetingName}:state`,
 
-    userSession: (meetingName: string, zoomUserId: string) =>
-      `session:${meetingName}:${zoomUserId}`,
+    userSession: (meetingName: string, userName: string) =>
+      `session:${meetingName}:${userName}`,
 
-    pendingDisconnect: (meetingName: string, zoomUserId: string) =>
-      `disconnect:${meetingName}:${zoomUserId}`,
+    pendingDisconnect: (meetingName: string, userName: string) =>
+      `disconnect:${meetingName}:${userName}`,
 
     audioStream: (meetingName: string, userName: string) =>
       `audio:${meetingName}:${userName}`,
@@ -1337,6 +1342,17 @@ export const chatController = async (
 
     sessionRecordings: (meetingName: string, recordingNumber: number) =>
       `session:recordings:${meetingName}:${recordingNumber}`,
+
+    recordingReadiness: (meetingName: string) => `readiness:${meetingName}`,
+
+    participantReady: (meetingName: string, userName: string) =>
+      `ready:${meetingName}:${userName}`,
+
+    disconnectionLog: (
+      meetingName: string,
+      userName: string,
+      recordingNumber: number
+    ) => `disconnect-log:${meetingName}:${userName}:${recordingNumber}`,
   };
 
   const getMeetingState = async (
@@ -1364,11 +1380,11 @@ export const chatController = async (
 
   const setUserSession = async (
     meetingName: string,
-    zoomUserId: string,
+    userName: string,
     session: UserSession
   ): Promise<void> => {
     await redis.set(
-      REDIS_KEYS.userSession(meetingName, zoomUserId),
+      REDIS_KEYS.userSession(meetingName, userName),
       JSON.stringify(session),
       "EX",
       86400
@@ -1377,39 +1393,17 @@ export const chatController = async (
 
   const getUserSession = async (
     meetingName: string,
-    zoomUserId: string
+    userName: string
   ): Promise<UserSession | null> => {
-    const data = await redis.get(
-      REDIS_KEYS.userSession(meetingName, zoomUserId)
-    );
+    const data = await redis.get(REDIS_KEYS.userSession(meetingName, userName));
     return data ? JSON.parse(data) : null;
   };
 
   const deleteUserSession = async (
     meetingName: string,
-    zoomUserId: string
+    userName: string
   ): Promise<void> => {
-    await redis.del(REDIS_KEYS.userSession(meetingName, zoomUserId));
-  };
-
-  const addRecordingToSession = async (
-    meetingName: string,
-    recordingNumber: number,
-    metadata: RecordingMetadata
-  ): Promise<void> => {
-    const key = REDIS_KEYS.sessionRecordings(meetingName, recordingNumber);
-
-    // ✅ Use RPUSH (atomic append) instead of GET+SET
-    await redis.rpush(key, JSON.stringify(metadata));
-
-    // Set expiry on first insert
-    await redis.expire(key, 172800);
-
-    const count = await redis.llen(key);
-
-    console.log(
-      `📝 Added recording metadata for ${metadata.userName} in session ${recordingNumber} (${count} total)`
-    );
+    await redis.del(REDIS_KEYS.userSession(meetingName, userName));
   };
 
   const getSessionRecordings = async (
@@ -1448,7 +1442,7 @@ export const chatController = async (
             return {
               session,
               meetingName: parts[1],
-              zoomUserId: parts[2],
+              userName: parts[2],
             };
           }
         }
@@ -1461,12 +1455,12 @@ export const chatController = async (
 
   const markPendingDisconnect = async (
     meetingName: string,
-    zoomUserId: string,
+    userName: string,
     socketId: string
   ): Promise<void> => {
     const disconnectTime = Date.now();
     await redis.set(
-      REDIS_KEYS.pendingDisconnect(meetingName, zoomUserId),
+      REDIS_KEYS.pendingDisconnect(meetingName, userName),
       JSON.stringify({ socketId, disconnectTime }),
       "PX",
       RECONNECTION_GRACE_PERIOD + 5000
@@ -1475,19 +1469,19 @@ export const chatController = async (
 
   const getPendingDisconnect = async (
     meetingName: string,
-    zoomUserId: string
+    userName: string
   ): Promise<{ socketId: string; disconnectTime: number } | null> => {
     const data = await redis.get(
-      REDIS_KEYS.pendingDisconnect(meetingName, zoomUserId)
+      REDIS_KEYS.pendingDisconnect(meetingName, userName)
     );
     return data ? JSON.parse(data) : null;
   };
 
   const clearPendingDisconnect = async (
     meetingName: string,
-    zoomUserId: string
+    userName: string
   ): Promise<void> => {
-    await redis.del(REDIS_KEYS.pendingDisconnect(meetingName, zoomUserId));
+    await redis.del(REDIS_KEYS.pendingDisconnect(meetingName, userName));
   };
 
   const startDisconnectCleanupWorker = () => {
@@ -1500,7 +1494,7 @@ export const chatController = async (
           const data = await redis.get(key);
           if (!data) continue;
 
-          const { socketId, disconnectTime } = JSON.parse(data);
+          const { socketId: oldSocketId, disconnectTime } = JSON.parse(data);
           const elapsed = Date.now() - disconnectTime;
 
           if (elapsed >= RECONNECTION_GRACE_PERIOD) {
@@ -1510,42 +1504,150 @@ export const chatController = async (
 
             const session = await getUserSession(meetingName, userName);
 
-            if (!session) {
-              console.log(
-                `⏰ Grace period expired for ${userName} in ${meetingName}`
+            console.log(
+              `⏰ Grace period expired for ${userName} in ${meetingName}`
+            );
+
+            // ✅ CHECK IF RECORDING IS ACTIVE
+            const activeRecording = await prisma.recordingSession.findFirst({
+              where: { meetingName, isRecording: true },
+            });
+
+            if (activeRecording) {
+              const streamInfo = await getAudioStreamInfo(
+                meetingName,
+                userName
               );
 
-              io.to(meetingName).emit("refresh-participants-required", {
-                message: "Participant disconnected and didn't reconnect.",
-                meetingName,
-                userName,
-                socketId,
-              });
+              if (streamInfo) {
+                // ✅ SERVER AUTO-STOPS THE DISCONNECTED USER'S STREAM
+                console.log(`🛑 Server auto-stopping stream for ${userName}`);
 
-              await clearPendingDisconnect(meetingName, userName);
-            } else if (session.socketId === socketId) {
-              console.log(
-                `⏰ Grace period expired for ${userName} in ${meetingName}`
-              );
+                try {
+                  // Close the write stream
+                  await closeWriteStream(oldSocketId);
+                  console.log(`✅ Auto-closed stream for ${userName}`);
+                } catch (error) {
+                  console.log(
+                    `⚠️ Stream may already be closed: ${error.message}`
+                  );
+                }
 
-              io.to(meetingName).emit("refresh-participants-required", {
-                message: "Participant disconnected and didn't reconnect.",
-                meetingName,
-                userName: session.userName,
-                socketId: session.socketId,
-              });
+                // Wait for filesystem
+                await new Promise((resolve) => setTimeout(resolve, 500));
 
-              await deleteUserSession(meetingName, userName);
-              await clearPendingDisconnect(meetingName, userName);
-            } else {
-              io.to(meetingName).emit("refresh-participants-required", {
-                message: "Participant disconnected and didn't reconnect.",
-                meetingName,
-                userName: session.userName,
-                socketId: session.socketId,
-              });
-              await clearPendingDisconnect(meetingName, userName);
+                // ✅ SAVE METADATA FOR THE DISCONNECTED USER
+                const recordingNumber = streamInfo.recordingNumber;
+
+                // Verify file exists
+                if (fs.existsSync(streamInfo.filepath)) {
+                  const stats = fs.statSync(streamInfo.filepath);
+                  const duration = Date.now() - streamInfo.startedAt;
+
+                  const recordingMetadata: RecordingMetadata = {
+                    meetingName,
+                    recordingNumber,
+                    userName,
+                    filepath: streamInfo.filepath,
+                    participantNumber: streamInfo.participantNumber,
+                    startTime: new Date(streamInfo.startedAt),
+                    endTime: new Date(),
+                  };
+
+                  console.log(`📝 Auto-saving metadata for ${userName}:`, {
+                    filepath: streamInfo.filepath,
+                    fileSize: stats.size,
+                  });
+
+                  // Save metadata atomically
+                  const metadataKey = REDIS_KEYS.sessionRecordings(
+                    meetingName,
+                    recordingNumber
+                  );
+
+                  const count = await redis.rpush(
+                    metadataKey,
+                    JSON.stringify(recordingMetadata)
+                  );
+
+                  await redis.expire(metadataKey, 172800);
+
+                  console.log(
+                    `✅ Auto-saved metadata for ${userName} (${count} participants)`
+                  );
+
+                  // Check if all participants done
+                  const recordingSession =
+                    await prisma.recordingSession.findFirst({
+                      where: { meetingName, recordingNumber },
+                    });
+
+                  if (
+                    recordingSession &&
+                    count === recordingSession.participantCount
+                  ) {
+                    console.log(
+                      `✅ All recordings complete, queueing processing...`
+                    );
+
+                    const lockKey = `lock:processing:${meetingName}:${recordingNumber}`;
+                    const lockSet = await redis.set(
+                      lockKey,
+                      "locked",
+                      "EX",
+                      30,
+                      "NX"
+                    );
+
+                    if (lockSet) {
+                      const sessionRecordings = await getSessionRecordings(
+                        meetingName,
+                        recordingNumber
+                      );
+
+                      const jobId = `local-${meetingName}-${recordingNumber}`;
+                      await localRecordingQueue.add(
+                        "process-local-recording",
+                        {
+                          meetingName,
+                          recordingNumber,
+                          recordings: sessionRecordings,
+                        },
+                        {
+                          jobId,
+                          priority: 1,
+                        }
+                      );
+
+                      console.log(
+                        `🎯 Queued processing for recording ${recordingNumber}`
+                      );
+                    }
+                  }
+                } else {
+                  console.error(
+                    `❌ File not found for ${userName}: ${streamInfo.filepath}`
+                  );
+                }
+
+                // Cleanup stream info
+                await deleteAudioStream(meetingName, userName);
+              }
             }
+
+            // ✅ NOTIFY OTHER PARTICIPANTS TO STOP THEIR RECORDINGS
+            io.to(meetingName).emit("participant-disconnected-timeout", {
+              meetingName,
+              userName,
+              message: "Participant was disconnected too long",
+            });
+
+            // Cleanup
+            if (session && session.socketId === oldSocketId) {
+              await deleteUserSession(meetingName, userName);
+            }
+
+            await clearPendingDisconnect(meetingName, userName);
           }
         }
       } catch (error) {
@@ -1681,17 +1783,215 @@ export const chatController = async (
     }
   };
 
+  const checkReadinessTimeout = async (
+    meetingName: string,
+    allParticipants: string[]
+  ) => {
+    try {
+      const stateData = await redis.get(
+        REDIS_KEYS.recordingReadiness(meetingName)
+      );
+
+      if (!stateData) {
+        return;
+      }
+
+      const state = JSON.parse(stateData);
+
+      if (state.readyParticipants.length === state.totalParticipants) {
+        return;
+      }
+
+      const notReady = allParticipants.filter(
+        (u) => !state.readyParticipants.includes(u)
+      );
+
+      console.error(`❌ Readiness timeout. Not ready: ${notReady.join(", ")}`);
+
+      io.to(meetingName).emit("recording-readiness-timeout", {
+        ready: state.readyParticipants,
+        notReady,
+        message: `Cannot start: ${notReady.join(", ")} not responding`,
+      });
+
+      await redis.del(REDIS_KEYS.recordingReadiness(meetingName));
+      for (const user of allParticipants) {
+        await redis.del(REDIS_KEYS.participantReady(meetingName, user));
+      }
+    } catch (error) {
+      console.error("❌ Error checking readiness timeout:", error);
+    }
+  };
+
+  const startRecordingForMeeting = async (meetingName: string) => {
+    try {
+      // ✅ PREVENT RACE CONDITION - Use Redis lock
+      const lockKey = `lock:recording:${meetingName}`;
+      const lockSet = await redis.set(lockKey, "locked", "EX", 5, "NX");
+
+      if (!lockSet) {
+        console.log(`⏭️ Recording already started for ${meetingName}`);
+        return;
+      }
+
+      console.log(`🎬 Starting recording for ${meetingName}`);
+
+      const meeting = await prisma.meeting.findUnique({
+        where: { sessionName: meetingName },
+        include: { participants: true },
+      });
+
+      if (!meeting) {
+        throw new Error("Meeting not found");
+      }
+
+      io.to(meetingName).emit("start-recording-now", {
+        timestamp: Date.now(),
+      });
+
+      await redis.del(REDIS_KEYS.recordingReadiness(meetingName));
+
+      const meeting2 = await prisma.meeting.findUnique({
+        where: { sessionName: meetingName },
+        include: { participants: { include: { user: true } } },
+      });
+
+      for (const p of meeting2.participants) {
+        await redis.del(
+          REDIS_KEYS.participantReady(meetingName, p.user.username)
+        );
+      }
+
+      await redis.del(lockKey);
+
+      console.log(`✅ Recording  started for all participants`);
+    } catch (error) {
+      io.to(meetingName).emit("recording-start-failed", {
+        message: error.message,
+      });
+      await redis.del(`lock:recording:${meetingName}`);
+    }
+  };
+
+  // Store disconnection events
+  const logDisconnection = async (
+    meetingName: string,
+    userName: string,
+    recordingNumber: number,
+    disconnectTime: number
+  ): Promise<void> => {
+    const log: {} = {
+      disconnectTime,
+      reconnectTime: null, // Will be filled on reconnect
+    };
+
+    const key = REDIS_KEYS.disconnectionLog(
+      meetingName,
+      userName,
+      recordingNumber
+    );
+
+    // Append to list
+    await redis.rpush(key, JSON.stringify(log));
+    await redis.expire(key, 172800); // 48 hours
+
+    console.log(
+      `📝 Logged disconnection for ${userName} at ${new Date(
+        disconnectTime
+      ).toISOString()}`
+    );
+  };
+
+  // Update reconnection time
+  const logReconnection = async (
+    meetingName: string,
+    userName: string,
+    recordingNumber: number,
+    reconnectTime: number
+  ): Promise<void> => {
+    const key = REDIS_KEYS.disconnectionLog(
+      meetingName,
+      userName,
+      recordingNumber
+    );
+
+    // Get all disconnect logs
+    const logs = await redis.lrange(key, 0, -1);
+
+    if (logs.length === 0) return;
+
+    // Find the last log without reconnect time
+    for (let i = logs.length - 1; i >= 0; i--) {
+      const log = JSON.parse(logs[i]);
+
+      if (log.reconnectTime === null) {
+        // Update this log
+        log.reconnectTime = reconnectTime;
+
+        // Replace in Redis (delete and re-insert all)
+        await redis.del(key);
+
+        const updatedLogs = logs.map((item, idx) =>
+          idx === i ? JSON.stringify(log) : item
+        );
+
+        for (const item of updatedLogs) {
+          await redis.rpush(key, item);
+        }
+        await redis.expire(key, 172800);
+
+        const pauseDuration = reconnectTime - log.disconnectTime;
+        console.log(
+          `📝 Logged reconnection for ${userName} at ${new Date(
+            reconnectTime
+          ).toISOString()} (paused ${pauseDuration}ms)`
+        );
+        break;
+      }
+    }
+  };
+
+  // Get all disconnection periods for a participant
+  const getDisconnectionLog = async (
+    meetingName: string,
+    userName: string,
+    recordingNumber: number
+  ): Promise<
+    Array<{
+      disconnectTime: number;
+      reconnectTime: number | null;
+      duration: number;
+    }>
+  > => {
+    const key = REDIS_KEYS.disconnectionLog(
+      meetingName,
+      userName,
+      recordingNumber
+    );
+    const logs = await redis.lrange(key, 0, -1);
+
+    return logs.map((item) => {
+      const log = JSON.parse(item);
+      return {
+        disconnectTime: log.disconnectTime,
+        reconnectTime: log.reconnectTime,
+        duration: log.reconnectTime
+          ? log.reconnectTime - log.disconnectTime
+          : null,
+      };
+    });
+  };
+
   io.on("connection", (socket: Socket): void => {
     socket.on(
       "join-meeting",
       async ({
         meetingName,
-        userName,
+
         isHost,
-        timestamp,
         sessionID,
         jwtToken,
-        zoomUserId,
+        userName,
         isReconnect,
       }) => {
         console.log(
@@ -1703,11 +2003,26 @@ export const chatController = async (
         if (isReconnect) {
           const pendingDisconnect = await getPendingDisconnect(
             meetingName,
-            zoomUserId
+            userName
           );
           if (pendingDisconnect) {
-            await clearPendingDisconnect(meetingName, zoomUserId);
+            await clearPendingDisconnect(meetingName, userName);
             console.log(`✅ Cleared pending disconnect for ${userName}`);
+
+            // ✅ LOG RECONNECTION IF RECORDING IS ACTIVE
+            const activeRecording = await prisma.recordingSession.findFirst({
+              where: { meetingName, isRecording: true },
+            });
+
+            if (activeRecording) {
+              const reconnectTime = Date.now();
+              await logReconnection(
+                meetingName,
+                userName,
+                activeRecording.recordingNumber,
+                reconnectTime
+              );
+            }
           }
         }
 
@@ -1717,16 +2032,14 @@ export const chatController = async (
           isHost,
           sessionID,
           jwtToken,
-          zoomUserId,
           socketId: socket.id,
           lastSeen: Date.now(),
         };
 
-        await setUserSession(meetingName, zoomUserId, session);
+        await setUserSession(meetingName, userName, session);
 
         if (isReconnect) {
           io.to(meetingName).emit("refresh-participants", {
-            zoomUserId,
             userName,
             isHost,
           });
@@ -1836,6 +2149,16 @@ export const chatController = async (
           const streamInfo = await getAudioStreamInfo(meetingName, userName);
 
           if (!streamInfo) {
+            // ✅ CHECK GRACE PERIOD
+            const key = `${meetingName}:${userName}`;
+            const stoppedAt = recentlyStoppedStreams.get(key);
+
+            if (stoppedAt && Date.now() - stoppedAt < 2000) {
+              // Within 2s grace period - silently ignore late chunks
+              return;
+            }
+
+            // Only log if outside grace period
             console.warn(
               `⚠️ No active stream for ${userName} in ${meetingName}`
             );
@@ -1857,19 +2180,23 @@ export const chatController = async (
 
     socket.on(
       "stop-audio-stream",
-      async (data: {
-        meetingName: string;
-        userName: string;
-        socketId: string | null;
-      }) => {
+      async (data: { meetingName: string; userName: string }) => {
         try {
-          const { meetingName, userName, socketId } = data;
+          const { meetingName, userName } = data;
 
           console.log(`🛑 Stop request from ${userName}`);
 
           const streamInfo = await getAudioStreamInfo(meetingName, userName);
 
           if (!streamInfo) {
+            const key = `${meetingName}:${userName}`;
+            const stoppedAt = recentlyStoppedStreams.get(key);
+
+            if (stoppedAt && Date.now() - stoppedAt < 5000) {
+              console.log(`⏭️ Stream already stopped recently for ${userName}`);
+              return;
+            }
+
             console.warn(`⚠️ No stream info for ${userName}`);
             socket.emit("audio-stream-error", {
               message: "No active stream found",
@@ -1877,13 +2204,17 @@ export const chatController = async (
             return;
           }
 
-          if (socketId === null) {
-            await closeWriteStream(socket.id);
-          } else {
-            await closeWriteStream(socketId);
+          const closeSocketId = socket.id;
+          console.log(`🔄 Closing stream for socket ${closeSocketId}...`);
+
+          try {
+            await closeWriteStream(closeSocketId);
+            console.log(`✅ Stream closed for ${userName}`);
+          } catch (error) {
+            console.log(`⚠️ Stream may already be closed for ${closeSocketId}`);
           }
 
-          console.log(`✅ Stream flushed to disk for ${userName}`);
+          await new Promise((resolve) => setTimeout(resolve, 500));
 
           const recordingNumber = streamInfo.recordingNumber;
 
@@ -1893,17 +2224,39 @@ export const chatController = async (
             filepath: streamInfo.filepath,
           });
 
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          // ✅ GET DISCONNECTION LOG
+          const disconnectionLog = await getDisconnectionLog(
+            meetingName,
+            userName,
+            recordingNumber
+          );
+
+          let fileExists = false;
+          let attempts = 0;
+          const maxAttempts = 5;
+
+          while (!fileExists && attempts < maxAttempts) {
+            fileExists = fs.existsSync(streamInfo.filepath);
+
+            if (!fileExists) {
+              attempts++;
+              const waitTime = 100 * Math.pow(2, attempts);
+              console.log(
+                `⏳ File not found yet, waiting ${waitTime}ms (attempt ${attempts}/${maxAttempts})...`
+              );
+              await new Promise((resolve) => setTimeout(resolve, waitTime));
+            }
+          }
 
           if (!fs.existsSync(streamInfo.filepath)) {
-            console.error(`❌ File not found: ${streamInfo.filepath}`);
+            console.error(
+              `❌ File not found after ${maxAttempts} attempts: ${streamInfo.filepath}`
+            );
 
             const dir = path.dirname(streamInfo.filepath);
             if (fs.existsSync(dir)) {
               const files = fs.readdirSync(dir);
               console.log(`📁 Directory contents:`, files);
-            } else {
-              console.log(`📁 Directory doesn't exist: ${dir}`);
             }
 
             throw new Error(`Recording file not found: ${streamInfo.filepath}`);
@@ -1928,70 +2281,106 @@ export const chatController = async (
             participantNumber: streamInfo.participantNumber,
             startTime: new Date(streamInfo.startedAt),
             endTime: new Date(),
+            disconnectionPeriods: disconnectionLog, // ✅ ADD THIS
           };
 
-          console.log(`📝 Saving metadata:`, {
-            recordingNumber,
-            participantNumber: streamInfo.participantNumber,
-            filepath: streamInfo.filepath,
-            fileSize: stats.size,
-          });
-
-          await addRecordingToSession(
-            meetingName,
-            recordingNumber,
-            recordingMetadata
-          );
-
-          await deleteAudioStream(meetingName, userName);
-
           console.log(
-            `🛑 Recording #${recordingNumber} stopped for ${userName} (${duration}ms, ${stats.size} bytes)`
+            `📝 Saving metadata with ${disconnectionLog.length} disconnection(s):`,
+            {
+              recordingNumber,
+              participantNumber: streamInfo.participantNumber,
+              filepath: streamInfo.filepath,
+              fileSize: stats.size,
+              disconnections: disconnectionLog,
+            }
           );
 
           const session = await prisma.recordingSession.findFirst({
-            where: {
-              meetingName,
-              recordingNumber,
-            },
+            where: { meetingName, recordingNumber },
           });
 
           if (!session) {
             console.warn(
               `⚠️ Session not found: ${meetingName} #${recordingNumber}`
             );
+            socket.emit("audio-stream-stopped", {
+              filepath: streamInfo.filepath,
+              duration,
+              recordingNumber,
+            });
             return;
           }
 
-          const sessionRecordings = await getSessionRecordings(
+          // ✅ ATOMIC METADATA SAVE
+          const metadataKey = REDIS_KEYS.sessionRecordings(
             meetingName,
             recordingNumber
           );
 
-          console.log(
-            `📊 Session progress: ${sessionRecordings.length}/${session.participantCount}`
+          const count = await redis.rpush(
+            metadataKey,
+            JSON.stringify(recordingMetadata)
           );
 
-          if (sessionRecordings.length === session.participantCount) {
-            console.log(
-              `✅ All ${sessionRecordings.length} recordings complete for session ${recordingNumber}`
-            );
+          await redis.expire(metadataKey, 172800);
 
-            console.log("🔍 Verifying all files before queueing...");
-            for (const rec of sessionRecordings) {
-              if (!fs.existsSync(rec.filepath)) {
-                console.error(`❌ Missing file: ${rec.filepath}`);
-                throw new Error(`Recording file missing: ${rec.filepath}`);
-              }
-              const fileStats = fs.statSync(rec.filepath);
-              console.log(
-                `   ✅ ${rec.userName}: ${rec.filepath} (${fileStats.size} bytes)`
-              );
+          // ✅ CLEANUP
+          await deleteAudioStream(meetingName, userName);
+
+          // ✅ ADD TO GRACE PERIOD
+          const key = `${meetingName}:${userName}`;
+          recentlyStoppedStreams.set(key, Date.now());
+
+          setTimeout(() => {
+            recentlyStoppedStreams.delete(key);
+          }, 5000);
+
+          console.log(
+            `🛑 Recording #${recordingNumber} stopped for ${userName} (${duration}ms, ${stats.size} bytes)`
+          );
+
+          console.log(
+            `📊 Session progress: ${count}/${session.participantCount}`
+          );
+
+          if (count === session.participantCount) {
+            const lockKey = `lock:processing:${meetingName}:${recordingNumber}`;
+            const lockSet = await redis.set(lockKey, "locked", "EX", 30, "NX");
+
+            if (!lockSet) {
+              console.log(`⏭️ Processing already started`);
+              socket.emit("audio-stream-stopped", {
+                filepath: streamInfo.filepath,
+                duration,
+                recordingNumber,
+              });
+              return;
             }
 
-            const jobId = `local-${meetingName}-${recordingNumber}`;
-
             try {
+              console.log(
+                `✅ All ${count} recordings complete for session ${recordingNumber}`
+              );
+
+              const sessionRecordings = await getSessionRecordings(
+                meetingName,
+                recordingNumber
+              );
+
+              console.log("🔍 Verifying all files...");
+              for (const rec of sessionRecordings) {
+                if (!fs.existsSync(rec.filepath)) {
+                  console.error(`❌ Missing file: ${rec.filepath}`);
+                  throw new Error(`Recording file missing: ${rec.filepath}`);
+                }
+                const fileStats = fs.statSync(rec.filepath);
+                console.log(
+                  `   ✅ ${rec.userName}: ${rec.filepath} (${fileStats.size} bytes)`
+                );
+              }
+
+              const jobId = `local-${meetingName}-${recordingNumber}`;
+
               await localRecordingQueue.add(
                 "process-local-recording",
                 {
@@ -2006,7 +2395,7 @@ export const chatController = async (
               );
 
               console.log(
-                `🎯 Queued processing for ${meetingName} recording ${recordingNumber}`
+                `🎯 Queued processing for recording ${recordingNumber}`
               );
             } catch (error: any) {
               if (
@@ -2015,13 +2404,12 @@ export const chatController = async (
               ) {
                 console.log(`⏭️ Job already queued, skipping`);
               } else {
+                await redis.del(lockKey);
                 throw error;
               }
             }
           } else {
-            console.log(
-              `⏳ Waiting: ${sessionRecordings.length}/${session.participantCount}`
-            );
+            console.log(`⏳ Waiting: ${count}/${session.participantCount}`);
           }
 
           socket.emit("audio-stream-stopped", {
@@ -2122,6 +2510,237 @@ export const chatController = async (
       }
     );
 
+    socket.on("host-start-recording", async ({ meetingName, userName }) => {
+      try {
+        console.log(
+          `🎬 ${userName} (host) initiating recording in ${meetingName}`
+        );
+
+        const session = await prisma.recordingSession.findFirst({
+          where: {
+            meetingName,
+            isRecording: true,
+          },
+        });
+
+        if (session) {
+          socket.emit("recording-start-failed", {
+            message: "Recording is already in progress for this meeting.",
+          });
+          return;
+        }
+
+        socket.emit("host-health-check-required", {
+          message: "Testing your connection...",
+        });
+      } catch (error) {
+        socket.emit("recording-start-failed", {
+          message: "Some issue with your network connection..",
+        });
+      }
+    });
+
+    socket.on("host-test-chunk", async ({ meetingName, userName, chunk }) => {
+      try {
+        if (!chunk || chunk.byteLength === 0) {
+          socket.emit("host-health-check-failed", {
+            reason: "Empty test chunk",
+          });
+          return;
+        }
+
+        // ✅ CHECK IF AUDIO HAS ACTUAL VOLUME (not silent/muted)
+        const pcmData = new Int16Array(chunk);
+        const maxVolume = Math.max(...pcmData.map(Math.abs));
+        const avgVolume =
+          pcmData.reduce((sum, val) => sum + Math.abs(val), 0) / pcmData.length;
+
+        console.log(`🔊 Host ${userName} volume check:`, {
+          maxVolume,
+          avgVolume,
+          samples: pcmData.length,
+        });
+
+        // ✅ THRESHOLD: Max volume should be > 500 (out of 32767)
+        // This ensures mic is not muted and picking up sound
+        const MIN_VOLUME_THRESHOLD = 200;
+
+        if (maxVolume < MIN_VOLUME_THRESHOLD) {
+          socket.emit("host-health-check-failed", {
+            reason: "Microphone appears to be muted or not picking up sound",
+            details: {
+              maxVolume,
+              required: MIN_VOLUME_THRESHOLD,
+            },
+          });
+          return;
+        }
+
+        console.log(
+          `✅ Host ${userName} health check passed (${chunk.byteLength} bytes)`
+        );
+
+        const meeting = await prisma.meeting.findUnique({
+          where: { sessionName: meetingName },
+          include: {
+            participants: {
+              include: { user: true },
+              orderBy: { userId: "asc" },
+            },
+          },
+        });
+
+        if (!meeting) {
+          throw new Error("Meeting not found");
+        }
+
+        const allParticipants = meeting.participants.map(
+          (p) => p.user.username
+        );
+        const otherParticipants = allParticipants.filter((p) => p !== userName);
+
+        const readinessState = {
+          hostReady: true,
+          totalParticipants: allParticipants.length,
+          readyParticipants: [userName],
+          timestamp: Date.now(),
+        };
+
+        await redis.set(
+          REDIS_KEYS.recordingReadiness(meetingName),
+          JSON.stringify(readinessState),
+          "EX",
+          60
+        );
+
+        await redis.set(
+          REDIS_KEYS.participantReady(meetingName, userName),
+          "true",
+          "EX",
+          60
+        );
+
+        socket.emit("host-health-check-passed", {
+          message: "Your connection is good",
+        });
+
+        if (otherParticipants.length > 0) {
+          console.log(
+            `📡 Checking ${otherParticipants.length} participants...`
+          );
+
+          io.to(meetingName).emit("participants-health-check-required", {
+            participants: allParticipants,
+            timeout: 10000,
+          });
+
+          setTimeout(async () => {
+            await checkReadinessTimeout(meetingName, allParticipants);
+          }, 10000);
+        } else {
+          await startRecordingForMeeting(meetingName);
+        }
+      } catch (error) {
+        socket.emit("host-health-check-failed", {
+          reason: "Some issue with your network connection..",
+        });
+      }
+    });
+
+    socket.on(
+      "participant-test-chunk",
+      async ({ meetingName, userName, chunk }) => {
+        try {
+          if (!chunk || chunk.byteLength === 0) {
+            socket.emit("participant-health-check-failed", {
+              reason: "Empty test chunk",
+            });
+            return;
+          }
+
+          // ✅ CHECK VOLUME FOR PARTICIPANTS TOO
+          const pcmData = new Int16Array(chunk);
+          const maxVolume = Math.max(...pcmData.map(Math.abs));
+          const avgVolume =
+            pcmData.reduce((sum, val) => sum + Math.abs(val), 0) /
+            pcmData.length;
+
+          console.log(`🔊 ${userName} volume check:`, {
+            maxVolume,
+            avgVolume,
+          });
+
+          const MIN_VOLUME_THRESHOLD = 200;
+
+          if (maxVolume < MIN_VOLUME_THRESHOLD) {
+            socket.emit("participant-health-check-failed", {
+              reason: "Microphone appears to be muted or not picking up sound",
+              details: {
+                maxVolume,
+                required: MIN_VOLUME_THRESHOLD,
+              },
+            });
+            return;
+          }
+
+          console.log(
+            `✅ ${userName} health check passed (${chunk.byteLength} bytes, volume: ${maxVolume})`
+          );
+
+          await redis.set(
+            REDIS_KEYS.participantReady(meetingName, userName),
+            "true",
+            "EX",
+            60
+          );
+
+          const stateData = await redis.get(
+            REDIS_KEYS.recordingReadiness(meetingName)
+          );
+
+          if (!stateData) {
+            console.warn(`⚠️ No readiness state for ${meetingName}`);
+            return;
+          }
+
+          const state = JSON.parse(stateData);
+
+          if (!state.readyParticipants.includes(userName)) {
+            state.readyParticipants.push(userName);
+
+            await redis.set(
+              REDIS_KEYS.recordingReadiness(meetingName),
+              JSON.stringify(state),
+              "EX",
+              60
+            );
+
+            io.to(meetingName).emit("readiness-progress", {
+              ready: state.readyParticipants.length,
+              total: state.totalParticipants,
+              readyUsers: state.readyParticipants,
+            });
+
+            console.log(
+              `📊 Readiness: ${state.readyParticipants.length}/${state.totalParticipants}`
+            );
+
+            if (state.readyParticipants.length === state.totalParticipants) {
+              await startRecordingForMeeting(meetingName);
+            }
+          }
+
+          socket.emit("participant-health-check-passed", {
+            message: "Your connection is good",
+          });
+        } catch (error) {
+          socket.emit("participant-health-check-failed", {
+            reason: "Some issue with your network connection..",
+          });
+        }
+      }
+    );
+
     socket.on("recording-started", async (data) => {
       io.to(data.meetingName).emit("recording-started", {
         ...data,
@@ -2130,7 +2749,7 @@ export const chatController = async (
     });
 
     socket.on("recording-stopped", async (data) => {
-      socket.to(data.meetingName).emit("recording-stopped", data);
+      io.to(data.meetingName).emit("recording-stopped", data);
       console.log(`🎬 Recording stoped in ${data.meetingName}`);
     });
 
@@ -2142,32 +2761,29 @@ export const chatController = async (
       io.to(data.meetingName).emit("audio-unmute-during-recording", data);
     });
 
-    socket.on(
-      "leave-meeting",
-      async ({ meetingName, userName, zoomUserId }) => {
-        socket.leave(meetingName);
+    socket.on("leave-meeting", async ({ meetingName, userName }) => {
+      socket.leave(meetingName);
 
-        closeWriteStream(socket.id);
-        await deleteAudioStream(meetingName, userName);
+      closeWriteStream(socket.id);
+      await deleteAudioStream(meetingName, userName);
 
-        await deleteUserSession(meetingName, zoomUserId);
-        await clearPendingDisconnect(meetingName, zoomUserId);
-        await handleMeetingLeave(meetingName, userName);
+      await deleteUserSession(meetingName, userName);
+      await clearPendingDisconnect(meetingName, userName);
+      await handleMeetingLeave(meetingName, userName);
 
-        io.to(meetingName).emit("participant-leave", {
-          meetingName,
-          stoppedBy: userName,
-          zoomUserId,
-        });
+      io.to(meetingName).emit("participant-leave", {
+        meetingName,
+        stoppedBy: userName,
+        userName,
+      });
 
-        console.log(`👋 ${userName} left ${meetingName}`);
-        const room = io.sockets.adapter.rooms.get(meetingName);
-        if (!room || room.size === 0) {
-          await updateMeeting(meetingName);
-          await deleteMeetingData(meetingName);
-        }
+      console.log(`👋 ${userName} left ${meetingName}`);
+      const room = io.sockets.adapter.rooms.get(meetingName);
+      if (!room || room.size === 0) {
+        await updateMeeting(meetingName);
+        await deleteMeetingData(meetingName);
       }
-    );
+    });
 
     socket.on("disconnect", async (reason) => {
       console.log(`🔌 Socket disconnected: ${socket.id}, reason: ${reason}`);
@@ -2179,17 +2795,37 @@ export const chatController = async (
           return;
         }
 
-        const { session, meetingName, zoomUserId } = userInfo;
+        const { session, meetingName } = userInfo;
         const { userName } = session;
 
-        const currentSession = await getUserSession(meetingName, zoomUserId);
+        const currentSession = await getUserSession(meetingName, userName);
 
         if (!currentSession || currentSession.socketId !== socket.id) {
           console.log(`⚠️ Socket ${socket.id} is not current for ${userName}`);
           return;
         }
 
-        await markPendingDisconnect(meetingName, zoomUserId, socket.id);
+        const disconnectTime = Date.now();
+
+        // ✅ CHECK IF RECORDING IS ACTIVE
+        const activeRecording = await prisma.recordingSession.findFirst({
+          where: { meetingName, isRecording: true },
+        });
+
+        if (activeRecording) {
+          // ✅ LOG DISCONNECTION WITH RECORDING NUMBER
+          await logDisconnection(
+            meetingName,
+            userName,
+            activeRecording.recordingNumber,
+            disconnectTime
+          );
+        }
+
+        // ✅ CLOSE STREAM IMMEDIATELY (prevent corrupted file)
+        await closeWriteStream(socket.id);
+
+        await markPendingDisconnect(meetingName, userName, socket.id);
         console.log(`⏱️ Marked ${userName} as pending disconnect`);
 
         socket.leave(meetingName);
