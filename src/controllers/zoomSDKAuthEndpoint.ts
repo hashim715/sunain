@@ -980,6 +980,16 @@ const calculateEarnings = (durationSeconds: number): number => {
   return (durationSeconds / SECONDS_PER_HOUR) * HOURLY_RATE;
 };
 
+interface TimingGap {
+  chunkNumber: number;
+  participant1Time: number | null;
+  participant2Time: number | null;
+  difference: number | null; // Positive = P1 ahead, Negative = P2 ahead
+  participant1Size?: number;
+  participant2Size?: number;
+  missingParticipant?: 1 | 2; // Which participant is missing this chunk
+}
+
 const processConversation = async (
   recording: any,
   meetingName: string,
@@ -990,7 +1000,8 @@ const processConversation = async (
   flaggin_reasons: string[],
   totalDuration: number,
   folder_name: string,
-  disconnections: Record<number, any[]> // ✅ ADD THIS PARAMETER
+  disconnections: Record<number, any[]>,
+  timingGaps: TimingGap[] | null
 ) => {
   const conversation = await prisma.conversation.findFirst({
     where: { recordingId: recording.id },
@@ -1069,6 +1080,7 @@ const processConversation = async (
     conversationNumber: count + 1,
     userId: conversation.userId,
     disconnections: participantDisconnections, // ✅ ADD THIS
+    timingGaps: timingGaps, // ✅ ADD THIS (shared by both participants)
   });
 
   if (totalDuration <= 500) {
@@ -1109,6 +1121,7 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
     folder_name,
     sessionId,
     disconnections,
+    timingGaps,
   } = job.data;
 
   console.log(`📥 Processing transcripts: ${meetingName}`);
@@ -1183,7 +1196,8 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
         flagging_response.reasons,
         totalDuration,
         folder_name,
-        disconnections
+        disconnections,
+        timingGaps
       );
     })
   );
