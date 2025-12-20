@@ -2074,7 +2074,7 @@ export const chatController = async (
               await prisma.recordingSession.update({
                 where: { id: session.id },
                 data: {
-                  status: "failed",
+                  status: "incomplete",
                   isRecording: false,
                   recordingEndTime: new Date(),
                 },
@@ -2531,7 +2531,7 @@ export const chatController = async (
               await prisma.recordingSession.update({
                 where: { id: session.id },
                 data: {
-                  status: "failed",
+                  status: "incomplete",
                   isRecording: false,
                   recordingEndTime: new Date(),
                 },
@@ -2578,7 +2578,7 @@ export const chatController = async (
               await prisma.recordingSession.update({
                 where: { id: failedSession.id },
                 data: {
-                  status: "failed",
+                  status: "incomplete",
                   isRecording: false,
                   recordingEndTime: new Date(),
                 },
