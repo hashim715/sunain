@@ -1519,6 +1519,14 @@ export const chatController = async (
                 userName
               );
 
+              const reconnectTime = Date.now();
+              await logReconnection(
+                meetingName,
+                userName,
+                activeRecording.recordingNumber,
+                reconnectTime
+              );
+
               if (streamInfo) {
                 // ✅ SERVER AUTO-STOPS THE DISCONNECTED USER'S STREAM
                 console.log(`🛑 Server auto-stopping stream for ${userName}`);
@@ -2326,6 +2334,11 @@ export const chatController = async (
 
           // ✅ CLEANUP
           await deleteAudioStream(meetingName, userName);
+
+          // ✅ CLEAN UP DISCONNECTION LOG
+          await redis.del(
+            REDIS_KEYS.disconnectionLog(meetingName, userName, recordingNumber)
+          );
 
           // ✅ ADD TO GRACE PERIOD
           const key = `${meetingName}:${userName}`;

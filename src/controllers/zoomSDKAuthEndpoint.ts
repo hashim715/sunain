@@ -1023,13 +1023,21 @@ const processConversation = async (
         },
       },
       conversations: {
-        some: {},
+        some: {
+          status: "completed",
+          flagged_status: false,
+        },
       },
     },
     include: {
       _count: {
         select: {
-          conversations: true,
+          conversations: {
+            where: {
+              status: "completed",
+              flagged_status: false,
+            },
+          },
         },
       },
       participants: {
@@ -1057,17 +1065,31 @@ const processConversation = async (
     userId: conversation.userId,
   });
 
-  await prisma.conversation.update({
-    where: { id: conversation.id },
-    data: {
-      quality: Math.random() * (0.85 - 0.8) + 0.8,
-      duration: totalDuration,
-      earnings: calculateEarnings(totalDuration),
-      flagged_status: false,
-      flagged_reasons: flaggin_reasons,
-      status: "completed",
-    },
-  });
+  if (totalDuration <= 500) {
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        quality: Math.random() * (0.85 - 0.8) + 0.8,
+        duration: totalDuration,
+        earnings: calculateEarnings(totalDuration),
+        flagged_status: true,
+        flagged_reasons: flaggin_reasons,
+        status: "incomplete",
+      },
+    });
+  } else {
+    await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        quality: Math.random() * (0.85 - 0.8) + 0.8,
+        duration: totalDuration,
+        earnings: calculateEarnings(totalDuration),
+        flagged_status: false,
+        flagged_reasons: flaggin_reasons,
+        status: "completed",
+      },
+    });
+  }
 
   console.log(
     `✅ Updated conversation for participant ${recording.participantNumber}`
