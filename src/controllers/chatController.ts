@@ -1784,6 +1784,7 @@ export const chatController = async (
         where: { sessionName: meetingName },
         data: { isActive: false, endedAt: new Date() },
       });
+      console.log(`✅ Meeting ${meetingName} marked as inactive`);
     } catch (err) {
       console.error("Error updating meeting:", err);
     }
@@ -2686,24 +2687,98 @@ export const chatController = async (
           `🎬 ${userName} (host) initiating recording in ${meetingName}`
         );
 
-        const session = await prisma.recordingSession.findFirst({
+        // ✅ CHECK FOR ACTIVE RECORDING SESSION
+        const activeSession = await prisma.recordingSession.findFirst({
           where: {
             meetingName,
             isRecording: true,
           },
         });
 
-        if (session) {
+        if (activeSession) {
           socket.emit("recording-start-failed", {
             message: "Recording is already in progress for this meeting.",
           });
           return;
         }
 
+        // ✅ GET ALL PARTICIPANTS
+        const meeting = await prisma.meeting.findUnique({
+          where: { sessionName: meetingName },
+          include: {
+            participants: {
+              include: { user: true },
+            },
+          },
+        });
+
+        if (!meeting) {
+          socket.emit("recording-start-failed", {
+            message: "Meeting not found.",
+          });
+          return;
+        }
+
+        const allParticipants = meeting.participants.map(
+          (p) => p.user.username
+        );
+
+        // ✅ CHECK FOR ACTIVE DISCONNECT TIMEOUTS
+        const activeDisconnects: string[] = [];
+
+        for (const participant of allParticipants) {
+          const pendingDisconnect = await getPendingDisconnect(
+            meetingName,
+            participant
+          );
+
+          if (pendingDisconnect) {
+            const elapsed = Date.now() - pendingDisconnect.disconnectTime;
+            const remaining = RECONNECTION_GRACE_PERIOD - elapsed;
+
+            if (remaining > 0) {
+              activeDisconnects.push(participant);
+            }
+          }
+        }
+
+        // ✅ BLOCK IF ANY DISCONNECT TIMEOUTS ACTIVE
+        if (activeDisconnects.length > 0) {
+          const remainingTime = Math.max(
+            ...(await Promise.all(
+              activeDisconnects.map(async (participant) => {
+                const pending = await getPendingDisconnect(
+                  meetingName,
+                  participant
+                );
+                return pending
+                  ? RECONNECTION_GRACE_PERIOD -
+                      (Date.now() - pending.disconnectTime)
+                  : 0;
+              })
+            ))
+          );
+
+          socket.emit("recording-start-failed", {
+            message: `Cannot start recording: ${activeDisconnects.join(", ")} ${
+              activeDisconnects.length === 1 ? "is" : "are"
+            } reconnecting. Please wait ${Math.ceil(
+              remainingTime / 1000
+            )} seconds.`,
+            details: {
+              activeDisconnects,
+              remainingTime: Math.ceil(remainingTime / 1000),
+            },
+          });
+          return;
+        }
+
+        // ✅ PROCEED WITH HEALTH CHECK
         socket.emit("host-health-check-required", {
           message: "Testing your connection...",
         });
       } catch (error) {
+        console.error("❌ Error in host-start-recording:", error);
         socket.emit("recording-start-failed", {
           message: "Some issue with your network connection..",
         });
