@@ -1302,6 +1302,9 @@ export const localRecordingQueue = new Queue("local-recordings", {
 const activeWriteStreams = new Map<string, fs.WriteStream>();
 const recentlyStoppedStreams = new Map<string, number>();
 
+const RECONNECTION_GRACE_PERIOD = 30000; // 30 seconds
+const CLEANUP_CHECK_INTERVAL = 5000; // 5 seconds
+
 export const chatController = async (
   app: Application,
   server: http.Server
@@ -1316,9 +1319,6 @@ export const chatController = async (
   io.adapter(createAdapter(pubClient, subClient));
 
   const redis = new Redis(process.env.REDIS_URL);
-
-  const RECONNECTION_GRACE_PERIOD = 30000; // 30 seconds
-  const CLEANUP_CHECK_INTERVAL = 5000; // 5 seconds
 
   const uploadsDir = path.join(__dirname, "..", "audio-recordings");
   if (!fs.existsSync(uploadsDir)) {
@@ -1519,20 +1519,23 @@ export const chatController = async (
                 userName
               );
 
-              const reconnectTime = Date.now();
-              await logReconnection(
+              // ✅ INSTEAD: Get the disconnect log to include in metadata
+              const disconnectionLog = await getDisconnectionLog(
                 meetingName,
                 userName,
-                activeRecording.recordingNumber,
-                reconnectTime
+                activeRecording.recordingNumber
+              );
+
+              console.log(
+                `📊 Disconnection log for ${userName}:`,
+                disconnectionLog
               );
 
               if (streamInfo) {
-                // ✅ SERVER AUTO-STOPS THE DISCONNECTED USER'S STREAM
+                // SERVER AUTO-STOPS THE DISCONNECTED USER'S STREAM
                 console.log(`🛑 Server auto-stopping stream for ${userName}`);
 
                 try {
-                  // Close the write stream
                   await closeWriteStream(oldSocketId);
                   console.log(`✅ Auto-closed stream for ${userName}`);
                 } catch (error) {
@@ -1544,7 +1547,7 @@ export const chatController = async (
                 // Wait for filesystem
                 await new Promise((resolve) => setTimeout(resolve, 500));
 
-                // ✅ SAVE METADATA FOR THE DISCONNECTED USER
+                // SAVE METADATA FOR THE DISCONNECTED USER
                 const recordingNumber = streamInfo.recordingNumber;
 
                 // Verify file exists
@@ -1560,11 +1563,13 @@ export const chatController = async (
                     participantNumber: streamInfo.participantNumber,
                     startTime: new Date(streamInfo.startedAt),
                     endTime: new Date(),
+                    disconnectionPeriods: disconnectionLog, // ✅ Add disconnect log
                   };
 
                   console.log(`📝 Auto-saving metadata for ${userName}:`, {
                     filepath: streamInfo.filepath,
                     fileSize: stats.size,
+                    disconnections: disconnectionLog.length,
                   });
 
                   // Save metadata atomically
@@ -1608,39 +1613,61 @@ export const chatController = async (
                     );
 
                     if (lockSet) {
-                      const sessionRecordings = await getSessionRecordings(
-                        meetingName,
-                        recordingNumber
-                      );
-
-                      const jobId = `local-${meetingName}-${recordingNumber}`;
-                      await localRecordingQueue.add(
-                        "process-local-recording",
-                        {
+                      try {
+                        const sessionRecordings = await getSessionRecordings(
                           meetingName,
-                          recordingNumber,
-                          recordings: sessionRecordings,
-                        },
-                        {
-                          jobId,
-                          priority: 1,
-                        }
-                      );
+                          recordingNumber
+                        );
 
-                      await prisma.recordingSession.update({
-                        where: {
-                          id: recordingSession.id,
-                        },
-                        data: {
-                          status: "completed",
-                          isRecording: false,
-                          recordingEndTime: new Date(),
-                        },
-                      });
+                        const jobId = `local-${meetingName}-${recordingNumber}`;
+                        await localRecordingQueue.add(
+                          "process-local-recording",
+                          {
+                            meetingName,
+                            recordingNumber,
+                            recordings: sessionRecordings,
+                          },
+                          {
+                            jobId,
+                            priority: 1,
+                          }
+                        );
 
-                      console.log(
-                        `🎯 Queued processing for recording ${recordingNumber}`
-                      );
+                        await prisma.recordingSession.update({
+                          where: { id: recordingSession.id },
+                          data: {
+                            status: "completed",
+                            isRecording: false,
+                            recordingEndTime: new Date(),
+                          },
+                        });
+
+                        // ✅ CLEAR WAITING TIMEOUT
+                        await redis.del(
+                          `wait-timeout:${meetingName}:${recordingNumber}`
+                        );
+
+                        console.log(
+                          `🎯 Queued processing for recording ${recordingNumber}`
+                        );
+                      } catch (error) {
+                        // ✅ ERROR HANDLING
+                        console.error(
+                          `❌ Failed in disconnect cleanup:`,
+                          error
+                        );
+
+                        await prisma.recordingSession.update({
+                          where: { id: recordingSession.id },
+                          data: {
+                            status: "incomplete",
+                            isRecording: false,
+                            recordingEndTime: new Date(),
+                          },
+                        });
+
+                        await redis.del(lockKey);
+                      }
                     }
                   }
                 } else {
@@ -1651,10 +1678,19 @@ export const chatController = async (
 
                 // Cleanup stream info
                 await deleteAudioStream(meetingName, userName);
+
+                // ✅ CLEANUP DISCONNECT LOG
+                await redis.del(
+                  REDIS_KEYS.disconnectionLog(
+                    meetingName,
+                    userName,
+                    activeRecording.recordingNumber
+                  )
+                );
               }
             }
 
-            // ✅ NOTIFY OTHER PARTICIPANTS TO STOP THEIR RECORDINGS
+            // NOTIFY OTHER PARTICIPANTS TO STOP THEIR RECORDINGS
             io.to(meetingName).emit("participant-disconnected-timeout", {
               meetingName,
               userName,
@@ -2001,6 +2037,68 @@ export const chatController = async (
     });
   };
 
+  // ✅ Worker to check for timed-out waiting sessions
+  const startWaitingTimeoutWorker = () => {
+    setInterval(async () => {
+      try {
+        const pattern = "wait-timeout:*";
+        const keys = await redis.keys(pattern);
+
+        for (const key of keys) {
+          const startTimeStr = await redis.get(key);
+          if (!startTimeStr) continue;
+
+          const startTime = parseInt(startTimeStr);
+          const elapsed = Date.now() - startTime;
+
+          // ✅ 1 MINUTE TIMEOUT
+          if (elapsed >= 60000) {
+            const parts = key.split(":");
+            const meetingName = parts[1];
+            const recordingNumber = parseInt(parts[2]);
+
+            console.log(
+              `⏰ Waiting timeout expired for ${meetingName} recording ${recordingNumber}`
+            );
+
+            // ✅ MARK SESSION AS FAILED
+            const session = await prisma.recordingSession.findFirst({
+              where: { meetingName, recordingNumber },
+            });
+
+            if (session && session.isRecording) {
+              console.log(
+                `❌ Not all participants finished within 1 minute - marking as failed`
+              );
+
+              await prisma.recordingSession.update({
+                where: { id: session.id },
+                data: {
+                  status: "failed",
+                  isRecording: false,
+                  recordingEndTime: new Date(),
+                },
+              });
+
+              // Clean up Redis
+              await deleteSessionRecordings(meetingName, recordingNumber);
+              await redis.del(key);
+
+              console.log(
+                `✅ Marked session ${recordingNumber} as failed due to timeout`
+              );
+            }
+          }
+        }
+      } catch (error) {
+        console.error("❌ Error in waiting timeout worker:", error);
+      }
+    }, 10000);
+  };
+
+  // Start the worker
+  startWaitingTimeoutWorker();
+
   io.on("connection", (socket: Socket): void => {
     socket.on(
       "join-meeting",
@@ -2243,7 +2341,6 @@ export const chatController = async (
             filepath: streamInfo.filepath,
           });
 
-          // ✅ GET DISCONNECTION LOG
           const disconnectionLog = await getDisconnectionLog(
             meetingName,
             userName,
@@ -2300,7 +2397,7 @@ export const chatController = async (
             participantNumber: streamInfo.participantNumber,
             startTime: new Date(streamInfo.startedAt),
             endTime: new Date(),
-            disconnectionPeriods: disconnectionLog, // ✅ ADD THIS
+            disconnectionPeriods: disconnectionLog,
           };
 
           console.log(
@@ -2330,7 +2427,6 @@ export const chatController = async (
             return;
           }
 
-          // ✅ ATOMIC METADATA SAVE
           const metadataKey = REDIS_KEYS.sessionRecordings(
             meetingName,
             recordingNumber
@@ -2343,15 +2439,12 @@ export const chatController = async (
 
           await redis.expire(metadataKey, 172800);
 
-          // ✅ CLEANUP
           await deleteAudioStream(meetingName, userName);
 
-          // ✅ CLEAN UP DISCONNECTION LOG
           await redis.del(
             REDIS_KEYS.disconnectionLog(meetingName, userName, recordingNumber)
           );
 
-          // ✅ ADD TO GRACE PERIOD
           const key = `${meetingName}:${userName}`;
           recentlyStoppedStreams.set(key, Date.now());
 
@@ -2368,6 +2461,7 @@ export const chatController = async (
           );
 
           if (count === session.participantCount) {
+            // ✅ ALL FILES READY - PROCESS IMMEDIATELY
             const lockKey = `lock:processing:${meetingName}:${recordingNumber}`;
             const lockSet = await redis.set(lockKey, "locked", "EX", 30, "NX");
 
@@ -2419,9 +2513,7 @@ export const chatController = async (
               );
 
               await prisma.recordingSession.update({
-                where: {
-                  id: session.id,
-                },
+                where: { id: session.id },
                 data: {
                   status: "completed",
                   isRecording: false,
@@ -2433,18 +2525,38 @@ export const chatController = async (
                 `🎯 Queued processing for recording ${recordingNumber}`
               );
             } catch (error: any) {
-              if (
-                error.message?.includes("already exists") ||
-                error.message?.includes("duplicate")
-              ) {
-                console.log(`⏭️ Job already queued, skipping`);
-              } else {
-                await redis.del(lockKey);
-                throw error;
-              }
+              // ✅ ERROR HANDLING - MARK AS FAILED
+              console.error(`❌ Failed to queue processing:`, error);
+
+              await prisma.recordingSession.update({
+                where: { id: session.id },
+                data: {
+                  status: "failed",
+                  isRecording: false,
+                  recordingEndTime: new Date(),
+                },
+              });
+
+              await redis.del(lockKey);
+
+              throw error;
             }
           } else {
+            // ✅ WAITING FOR OTHER PARTICIPANTS - SET 1 MINUTE TIMEOUT
             console.log(`⏳ Waiting: ${count}/${session.participantCount}`);
+
+            // ✅ SET TIMEOUT KEY IN REDIS
+            const waitTimeoutKey = `wait-timeout:${meetingName}:${recordingNumber}`;
+
+            // Only set timeout if not already set by another participant
+            const alreadySet = await redis.get(waitTimeoutKey);
+
+            if (!alreadySet) {
+              await redis.set(waitTimeoutKey, Date.now().toString(), "EX", 60);
+              console.log(
+                `⏰ Started 1-minute timeout for session ${recordingNumber}`
+              );
+            }
           }
 
           socket.emit("audio-stream-stopped", {
@@ -2454,6 +2566,29 @@ export const chatController = async (
           });
         } catch (error) {
           console.error("❌ Error stopping audio stream:", error);
+
+          // ✅ TRY TO MARK SESSION AS FAILED
+          try {
+            const { meetingName } = data;
+            const failedSession = await prisma.recordingSession.findFirst({
+              where: { meetingName, isRecording: true },
+            });
+
+            if (failedSession) {
+              await prisma.recordingSession.update({
+                where: { id: failedSession.id },
+                data: {
+                  status: "failed",
+                  isRecording: false,
+                  recordingEndTime: new Date(),
+                },
+              });
+              console.log(`📝 Marked session as failed due to error`);
+            }
+          } catch (updateError) {
+            console.error("❌ Could not mark session as failed:", updateError);
+          }
+
           socket.emit("audio-stream-error", {
             message: error.message || "Failed to stop stream",
           });
