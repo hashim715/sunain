@@ -1627,6 +1627,13 @@ export const chatController = async (
                         }
                       );
 
+                      await prisma.recordingSession.update({
+                        where: {
+                          id: recordingSession.id,
+                        },
+                        data: { status: "completed", isRecording: false },
+                      });
+
                       console.log(
                         `🎯 Queued processing for recording ${recordingNumber}`
                       );
@@ -2357,14 +2364,6 @@ export const chatController = async (
           );
 
           if (count === session.participantCount) {
-            await prisma.recordingSession.update({
-              where: {
-                meetingName_recordingNumber: { meetingName, recordingNumber },
-                isRecording: true,
-              },
-              data: { status: "completed", isRecording: false },
-            });
-
             const lockKey = `lock:processing:${meetingName}:${recordingNumber}`;
             const lockSet = await redis.set(lockKey, "locked", "EX", 30, "NX");
 
@@ -2414,6 +2413,13 @@ export const chatController = async (
                   priority: 1,
                 }
               );
+
+              await prisma.recordingSession.update({
+                where: {
+                  id: session.id,
+                },
+                data: { status: "completed", isRecording: false },
+              });
 
               console.log(
                 `🎯 Queued processing for recording ${recordingNumber}`
