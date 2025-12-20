@@ -906,8 +906,8 @@ export const chatController = async (
           const startTime = parseInt(startTimeStr);
           const elapsed = Date.now() - startTime;
 
-          // ✅ 1 MINUTE TIMEOUT
-          if (elapsed >= 60000) {
+          // ✅ 2 MINUTE TIMEOUT
+          if (elapsed >= 120000) {
             const parts = key.split(":");
             const meetingName = parts[1];
             const recordingNumber = parseInt(parts[2]);
@@ -1485,7 +1485,7 @@ export const chatController = async (
               throw error;
             }
           } else {
-            // ✅ WAITING FOR OTHER PARTICIPANTS - SET 1 MINUTE TIMEOUT
+            // ✅ WAITING FOR OTHER PARTICIPANTS - SET 2 MINUTE TIMEOUT
             console.log(`⏳ Waiting: ${count}/${session.participantCount}`);
 
             // ✅ SET TIMEOUT KEY IN REDIS
@@ -1495,9 +1495,9 @@ export const chatController = async (
             const alreadySet = await redis.get(waitTimeoutKey);
 
             if (!alreadySet) {
-              await redis.set(waitTimeoutKey, Date.now().toString(), "EX", 60);
+              await redis.set(waitTimeoutKey, Date.now().toString(), "EX", 120);
               console.log(
-                `⏰ Started 1-minute timeout for session ${recordingNumber}`
+                `⏰ Started 2-minute timeout for session ${recordingNumber}`
               );
             }
           }
