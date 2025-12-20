@@ -1639,7 +1639,8 @@ export const chatController = async (
 
         if (activeSession) {
           socket.emit("recording-start-failed", {
-            message: "Recording is already in progress for this meeting.",
+            message:
+              "Recording is already in progress for this meeting wait 2 minutes before starting a new one.",
           });
           return;
         }
