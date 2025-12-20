@@ -3097,9 +3097,21 @@ localRecordingQueue.process("process-local-recording", async (job: any) => {
 
     const s3Bucket = process.env.S3_BUCKET_NAME!;
 
+    // ✅ COLLECT DISCONNECTIONS FOR EACH PARTICIPANT
+    const participantDisconnections: Record<number, any[]> = {};
+
     // Process each recording
     for (const rec of recordings) {
       console.log(`📤 Uploading ${rec.userName}'s recording...`);
+
+      // ✅ STORE DISCONNECTIONS BY PARTICIPANT NUMBER
+      if (rec.disconnectionPeriods && rec.disconnectionPeriods.length > 0) {
+        participantDisconnections[rec.participantNumber] =
+          rec.disconnectionPeriods;
+        console.log(
+          `📊 Participant ${rec.participantNumber} has ${rec.disconnectionPeriods.length} disconnection(s)`
+        );
+      }
 
       // Read file
       const fileBuffer = fs.readFileSync(rec.filepath);
@@ -3180,6 +3192,7 @@ localRecordingQueue.process("process-local-recording", async (job: any) => {
         recordingNumber,
         folder_name,
         sessionId: session.id,
+        disconnections: participantDisconnections, // ✅ ADD THIS
       },
       {
         jobId: `transcript-${meetingName}-${recordingNumber}`,

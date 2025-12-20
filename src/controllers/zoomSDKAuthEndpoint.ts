@@ -989,7 +989,8 @@ const processConversation = async (
   flagging: boolean,
   flaggin_reasons: string[],
   totalDuration: number,
-  folder_name: string
+  folder_name: string,
+  disconnections: Record<number, any[]> // ✅ ADD THIS PARAMETER
 ) => {
   const conversation = await prisma.conversation.findFirst({
     where: { recordingId: recording.id },
@@ -1055,6 +1056,10 @@ const processConversation = async (
 
   const count = validMeetings.length;
 
+  // ✅ GET DISCONNECTIONS FOR THIS PARTICIPANT
+  const participantDisconnections =
+    disconnections[recording.participantNumber] || [];
+
   const metadata = await callAPI("/save-metadata", {
     s3_folder_path: `${language}/${folder_name}/recording-${recordingNumber}`,
     gender: conversation.user.gender,
@@ -1063,6 +1068,7 @@ const processConversation = async (
     dialect: conversation.user.language_dialect,
     conversationNumber: count + 1,
     userId: conversation.userId,
+    disconnections: participantDisconnections, // ✅ ADD THIS
   });
 
   if (totalDuration <= 500) {
@@ -1097,7 +1103,13 @@ const processConversation = async (
 };
 
 transcriptQueue.process("process-transcripts", async (job: any) => {
-  const { meetingName, recordingNumber, folder_name, sessionId } = job.data;
+  const {
+    meetingName,
+    recordingNumber,
+    folder_name,
+    sessionId,
+    disconnections,
+  } = job.data;
 
   console.log(`📥 Processing transcripts: ${meetingName}`);
   console.log(`📥 Recording Number: recording-${recordingNumber}`);
@@ -1170,7 +1182,8 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
         flagging_response.should_flag,
         flagging_response.reasons,
         totalDuration,
-        folder_name
+        folder_name,
+        disconnections
       );
     })
   );
