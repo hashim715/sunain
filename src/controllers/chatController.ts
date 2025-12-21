@@ -1217,7 +1217,7 @@ export const chatController = async (
           await redis.expire(timestampKey, 172800); // 48 hours
 
           // ✅ LOG EVERY 10 CHUNKS
-          if (chunkNumber % 10 === 0) {
+          if (chunkNumber % 100 === 0) {
             console.log(
               `📊 ${userName} chunk ${chunkNumber} @ ${timestamp}ms (${chunk.byteLength} bytes)`
             );
