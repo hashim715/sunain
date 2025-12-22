@@ -678,80 +678,76 @@ export const getAllLanguageStats: RequestHandler = async (
   res: Response
 ) => {
   try {
-    const meetings = await prisma.meeting.findMany({
+    // Get all conversations that are completed and unflagged
+    const conversations = await prisma.conversation.findMany({
       where: {
-        conversations: {
-          every: {
-            status: "completed",
-            flagged_status: false,
+        status: "completed",
+        flagged_status: false,
+      },
+      select: {
+        meetingId: true,
+        duration: true,
+        recording: {
+          select: {
+            recordingNumber: true,
+          },
+        },
+        meeting: {
+          select: {
+            language: true,
           },
         },
       },
-      select: {
-        language: true,
-      },
-      distinct: ["language"],
     });
 
-    const languageStats = await Promise.all(
-      meetings.map(async (meeting) => {
-        const conversations = await prisma.conversation.findMany({
-          where: {
-            meeting: {
-              language: meeting.language,
-            },
-            status: "completed",
-            flagged_status: false,
-          },
-          select: {
-            meetingId: true,
-            duration: true,
-            recording: {
-              select: {
-                recordingNumber: true,
-              },
-            },
-          },
-        });
+    // Group by recording (meetingId + recordingNumber)
+    const recordingGroups = new Map<
+      string,
+      {
+        language: string;
+        duration: number;
+        count: number;
+      }
+    >();
 
-        // Group conversations by recording
-        const recordingGroups = new Map<
-          string,
-          { duration: number; count: number }
-        >();
+    conversations.forEach((conv) => {
+      if (conv.recording) {
+        const key = `${conv.meetingId}-${conv.recording.recordingNumber}`;
 
-        conversations.forEach((conv) => {
-          if (conv.recording) {
-            const key = `${conv.meetingId}-${conv.recording.recordingNumber}`;
+        if (!recordingGroups.has(key)) {
+          recordingGroups.set(key, {
+            language: conv.meeting.language,
+            duration: parseFloat(conv.duration.toString()),
+            count: 1,
+          });
+        } else {
+          recordingGroups.get(key)!.count++;
+        }
+      }
+    });
 
-            if (!recordingGroups.has(key)) {
-              recordingGroups.set(key, {
-                duration: parseFloat(conv.duration.toString()),
-                count: 1,
-              });
-            } else {
-              recordingGroups.get(key)!.count++;
-            }
-          }
-        });
+    // Filter recordings with > 1 conversation and group by language
+    const languageMap = new Map<
+      string,
+      { totalHours: number; count: number }
+    >();
 
-        // Filter out recordings with only 1 conversation
-        const validRecordings = Array.from(recordingGroups.entries()).filter(
-          ([_, data]) => data.count > 1
-        );
+    Array.from(recordingGroups.values())
+      .filter((data) => data.count > 1)
+      .forEach(({ language, duration }) => {
+        if (!languageMap.has(language)) {
+          languageMap.set(language, { totalHours: 0, count: 0 });
+        }
+        const stats = languageMap.get(language)!;
+        stats.totalHours += duration / 3600;
+        stats.count++;
+      });
 
-        const totalDurationSeconds = validRecordings.reduce(
-          (sum, [_, data]) => sum + data.duration,
-          0
-        );
-
-        const totalHours = parseFloat((totalDurationSeconds / 3600).toFixed(2));
-
-        return {
-          language: meeting.language,
-          total_hours: totalHours,
-          total_recordings: validRecordings.length,
-        };
+    const languageStats = Array.from(languageMap.entries()).map(
+      ([language, stats]) => ({
+        language,
+        total_hours: parseFloat(stats.totalHours.toFixed(2)),
+        total_recordings: stats.count,
       })
     );
 
