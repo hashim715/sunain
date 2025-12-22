@@ -695,7 +695,6 @@ export const getAllLanguageStats: RequestHandler = async (
 
     const languageStats = await Promise.all(
       meetings.map(async (meeting) => {
-        // Get all conversations with their recording details
         const conversations = await prisma.conversation.findMany({
           where: {
             meeting: {
@@ -715,30 +714,43 @@ export const getAllLanguageStats: RequestHandler = async (
           },
         });
 
-        // Group by meetingId + recordingNumber combination
-        const uniqueRecordings = new Map<string, number>();
+        // Group conversations by recording
+        const recordingGroups = new Map<
+          string,
+          { duration: number; count: number }
+        >();
 
         conversations.forEach((conv) => {
           if (conv.recording) {
-            // Create unique key: meetingId-recordingNumber
             const key = `${conv.meetingId}-${conv.recording.recordingNumber}`;
 
-            if (!uniqueRecordings.has(key)) {
-              uniqueRecordings.set(key, parseFloat(conv.duration.toString()));
+            if (!recordingGroups.has(key)) {
+              recordingGroups.set(key, {
+                duration: parseFloat(conv.duration.toString()),
+                count: 1,
+              });
+            } else {
+              recordingGroups.get(key)!.count++;
             }
           }
         });
 
-        const totalDurationSeconds = Array.from(
-          uniqueRecordings.values()
-        ).reduce((sum, duration) => sum + duration, 0);
+        // Filter out recordings with only 1 conversation
+        const validRecordings = Array.from(recordingGroups.entries()).filter(
+          ([_, data]) => data.count > 1
+        );
+
+        const totalDurationSeconds = validRecordings.reduce(
+          (sum, [_, data]) => sum + data.duration,
+          0
+        );
 
         const totalHours = parseFloat((totalDurationSeconds / 3600).toFixed(2));
 
         return {
           language: meeting.language,
           total_hours: totalHours,
-          total_recordings: uniqueRecordings.size,
+          total_recordings: validRecordings.length,
         };
       })
     );
