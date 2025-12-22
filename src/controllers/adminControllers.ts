@@ -681,7 +681,7 @@ export const getAllLanguageStats: RequestHandler = async (
     const meetings = await prisma.meeting.findMany({
       where: {
         conversations: {
-          some: {
+          every: {
             status: "completed",
             flagged_status: false,
           },
