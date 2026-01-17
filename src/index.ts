@@ -67,6 +67,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "https://ourlisa.com",
   "https://www.ourlisa.com",
+  "https://www.sunain.com",
   "https://beta.ourlisa.com",
   "http://192.168.1.168:5173",
   "http://0.0.0.0:5173",
