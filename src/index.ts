@@ -80,22 +80,22 @@ app.use(express.json());
 const corsOptions =
   process.env.ALLOW_ALL_ORIGINS === "true"
     ? {
-        origin: function (origin: any, callback: any) {
-          callback(null, origin || "*");
-        },
-        credentials: true,
-      }
+      origin: function (origin: any, callback: any) {
+        callback(null, origin || "*");
+      },
+      credentials: true,
+    }
     : {
-        origin: function (origin: any, callback: any) {
-          if (!origin) return callback(null, true);
-          if (allowedOrigins.includes(origin)) {
-            return callback(null, true);
-          } else {
-            return callback(new Error("Not allowed by CORS"));
-          }
-        },
-        credentials: true,
-      };
+      origin: function (origin: any, callback: any) {
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) {
+          return callback(null, true);
+        } else {
+          return callback(new Error("Not allowed by CORS"));
+        }
+      },
+      credentials: true,
+    };
 
 app.use(cors(corsOptions));
 
@@ -152,14 +152,14 @@ const start = async (): Promise<void> => {
   try {
     logger.info("🚀 Starting server...");
 
-    // fillTopicData()
-    //   .catch((e) => {
-    //     console.error(e);
-    //     process.exit(1);
-    //   })
-    //   .finally(async () => {
-    //     await prisma.$disconnect();
-    //   });
+    fillTopicData()
+      .catch((e) => {
+        console.error(e);
+        process.exit(1);
+      })
+      .finally(async () => {
+        await prisma.$disconnect();
+      });
 
     if (process.env.ENV !== "production") {
       logger.info("🗑️ Clearing all jobs from queue...");

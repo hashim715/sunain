@@ -1084,7 +1084,7 @@ export const chatController = async (
           });
 
           const participant = meeting?.participants.find(
-            (p) => p.user.username === userName
+            (p: { user: { username: string } }) => p.user.username === userName
           );
 
           if (!participant) {
@@ -1663,7 +1663,7 @@ export const chatController = async (
         }
 
         const allParticipants = meeting.participants.map(
-          (p) => p.user.username
+          (p: { user: { username: string } }) => p.user.username
         );
 
         // ✅ CHECK FOR ACTIVE DISCONNECT TIMEOUTS
@@ -1783,9 +1783,9 @@ export const chatController = async (
         }
 
         const allParticipants = meeting.participants.map(
-          (p) => p.user.username
+          (p: { user: { username: string } }) => p.user.username
         );
-        const otherParticipants = allParticipants.filter((p) => p !== userName);
+        const otherParticipants = allParticipants.filter((p: string) => p !== userName);
 
         const readinessState = {
           hostReady: true,
@@ -2090,7 +2090,7 @@ localRecordingQueue.process("process-local-recording", async (job: any) => {
       throw new Error(`Meeting not found: ${meetingName}`);
     }
 
-    const dialects = meeting.participants.map((p) => p.dialect || "Unknown");
+    const dialects = meeting.participants.map((p: { dialect: string | null }) => p.dialect || "Unknown");
 
     let session = await prisma.recordingSession.findFirst({
       where: {
