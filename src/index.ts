@@ -57,7 +57,7 @@ const cleanupUnverifiedAccounts = async () => {
 dotenv.config();
 
 const app: Application = express();
-const PORT: number = parseInt(process.env.PORT) || 5002;
+const PORT: number = parseInt(process.env.PORT) || 5001;
 
 app.use(cookieParser());
 app.set("trust proxy", 1);
