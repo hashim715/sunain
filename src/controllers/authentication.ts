@@ -287,8 +287,6 @@ export const login: RequestHandler = async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
 
-    console.log(email, password);
-
     if (!email || !password) {
       return res
         .status(400)
