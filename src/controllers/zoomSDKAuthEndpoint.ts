@@ -1162,13 +1162,7 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
   });
   console.log("✅ flagging of coversation completed");
 
-  console.log("🎙️  Step 4: Merging audio to conversation.wav...");
-  await callAPI("/merge-audio", {
-    s3_folder_path: s3FolderPath,
-  });
-  console.log("✅ Audio merging completed");
-
-  console.log("👥 Step 5: Processing conversations...");
+  console.log("👥 Step 4: Processing conversations...");
   const recordings = await prisma.recording.findMany({
     where: {
       meetingName: meetingName,
@@ -1202,6 +1196,13 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
       );
     })
   );
+
+  console.log("🎙️  Step 5: Merging audio to conversation.wav...");
+  await callAPI("/merge-audio", {
+    s3_folder_path: s3FolderPath,
+  });
+  console.log("✅ Audio merging completed");
+
   console.log("✅ All conversations processed successfully");
 
   return {
