@@ -1071,6 +1071,7 @@ const processConversation = async (
   const participantDisconnections =
     disconnections[recording.participantNumber] || [];
 
+  // ✅ ONLY SEND TIMING GAPS FOR PARTICIPANT 1 (to avoid duplication)
   const metadata = await callAPI("/save-metadata", {
     s3_folder_path: `${language}/${folder_name}/recording-${recordingNumber}`,
     gender: conversation.user.gender,
@@ -1079,8 +1080,8 @@ const processConversation = async (
     dialect: conversation.user.language_dialect,
     conversationNumber: count + 1,
     userId: conversation.userId,
-    disconnections: participantDisconnections, // ✅ ADD THIS
-    timingGaps: timingGaps, // ✅ ADD THIS (shared by both participants)
+    disconnections: participantDisconnections,
+    timingGaps: recording.participantNumber === 1 ? timingGaps : null, // ✅ ONLY SEND FOR PARTICIPANT 1
   });
 
   if (totalDuration <= 500) {
