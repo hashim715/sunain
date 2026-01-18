@@ -1203,29 +1203,34 @@ export const chatController = async (
           const serverRelativeTime =
             serverReceiveTime - streamInfo.serverStartTime;
 
-          // ✅ GET ACTUAL DURATION FROM FFPROBE
-          let actualDuration = 0;
+          // ✅ SAVE CHUNK TEMPORARILY TO PROBE IT
+          let chunkDuration = 0;
 
           try {
-            // Flush the stream to ensure chunk is written
-            await new Promise<void>((resolve) => {
-              stream.once("drain", () => resolve());
-              if (!stream.write("")) resolve(); // If buffer not full, resolve immediately
-            });
+            const tempChunkPath = path.join(
+              uploadsDir,
+              `temp-chunk-${meetingName}-${userName}-${chunkNumber}.webm`
+            );
 
-            // Get actual audio duration from the file so far
-            actualDuration = await getAudioDuration(streamInfo.filepath);
-            actualDuration = Math.round(actualDuration * 1000); // Convert to ms
+            // Write chunk to temp file
+            fs.writeFileSync(tempChunkPath, chunk);
+
+            // Probe the individual chunk
+            const duration = await getAudioDuration(tempChunkPath);
+            chunkDuration = Math.round(duration * 1000); // Convert to ms
+
+            // Delete temp file immediately
+            fs.unlinkSync(tempChunkPath);
 
             console.log(
-              `🎵 Chunk ${chunkNumber}: ffprobe duration = ${actualDuration}ms`
+              `🎵 Chunk ${chunkNumber}: individual duration = ${chunkDuration}ms`
             );
           } catch (probeError) {
             console.warn(
-              `⚠️ Could not probe audio duration: ${probeError.message}`
+              `⚠️ Could not probe chunk ${chunkNumber}: ${probeError.message}`
             );
-            // Fallback to timestamp-based estimation
-            actualDuration = serverRelativeTime;
+            // Fallback: assume ~1000ms per chunk (typical for 1-second intervals)
+            chunkDuration = 1000;
           }
 
           const chunkInfo: ChunkTimestamp = {
@@ -1234,7 +1239,7 @@ export const chatController = async (
             serverReceiveTime,
             serverRelativeTime,
             size: chunk.byteLength,
-            estimatedDuration: actualDuration, // ✅ NOW CONTAINS ACTUAL DURATION FROM FFPROBE
+            estimatedDuration: chunkDuration, // ✅ NOW CONTAINS ACTUAL INDIVIDUAL CHUNK DURATION
           };
 
           const timestampKey = REDIS_KEYS.chunkTimestamps(
@@ -1248,7 +1253,7 @@ export const chatController = async (
 
           if (chunkNumber % 100 === 0) {
             console.log(
-              `📊 ${userName} chunk ${chunkNumber} @ ${serverRelativeTime}ms (actual duration: ${actualDuration}ms, ${chunk.byteLength} bytes)`
+              `📊 ${userName} chunk ${chunkNumber} @ ${serverRelativeTime}ms (chunk duration: ${chunkDuration}ms, ${chunk.byteLength} bytes)`
             );
           }
         } catch (error) {
