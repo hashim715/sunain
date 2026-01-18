@@ -798,7 +798,12 @@ export const changePhoneNumber: RequestHandler = async (
     const next2Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
 
     await twilio_client.messages.create({
-      body: `Your Sunain code is ${code}`,
+      body: `Sunain Verification Code: ${code}
+    
+    Tap to verify your phone:
+    https://sunain.com/verify-phone/${encodeURIComponent(phone_number)}
+    
+    If you didn’t request this, please ignore this message.`,
       from: process.env.TWILIO_ACCOUNT_PHONE_NUMBER,
       to: phone_number,
     });
@@ -1019,7 +1024,12 @@ export const resendVerificationCodeToChangePhoneNumber: RequestHandler = async (
     const next2Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
 
     await twilio_client.messages.create({
-      body: `Your Sunain code is ${code}`,
+      body: `Sunain Verification Code: ${code}
+    
+    Tap to verify your phone:
+    https://sunain.com/verify-phone/${encodeURIComponent(phone_number)}
+    
+    If you didn’t request this, please ignore this message.`,
       from: process.env.TWILIO_ACCOUNT_PHONE_NUMBER,
       to: phone_number,
     });
@@ -1427,7 +1437,12 @@ export const resendVerificationCodeToPhoneNumber: RequestHandler = async (
     const next2Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
 
     await twilio_client.messages.create({
-      body: `Your Sunain code is ${code}`,
+      body: `Sunain Verification Code: ${code}
+    
+    Tap to verify your phone:
+    https://sunain.com/verify-phone/${encodeURIComponent(phone_number)}
+    
+    If you didn’t request this, please ignore this message.`,
       from: process.env.TWILIO_ACCOUNT_PHONE_NUMBER,
       to: phone_number,
     });
@@ -1550,7 +1565,12 @@ export const sendVerificationCodeToPhoneNumber: RequestHandler = async (
     const next2Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
 
     await twilio_client.messages.create({
-      body: `Your Sunain code is ${code}`,
+      body: `Sunain Verification Code: ${code}
+    
+    Tap to verify your phone:
+    https://sunain.com/verify-phone/${encodeURIComponent(phone_number)}
+    
+    If you didn’t request this, please ignore this message.`,
       from: process.env.TWILIO_ACCOUNT_PHONE_NUMBER,
       to: phone_number,
     });
