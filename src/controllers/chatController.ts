@@ -34,25 +34,29 @@ interface AudioStreamInfo {
   startedAt: number;
   participantNumber: number;
   recordingNumber: number;
+  serverStartTime: number; // ✅ NEW: Absolute server time when stream started
 }
 
-// Single chunk timestamp info
 interface ChunkTimestamp {
   chunkNumber: number;
-  clientTimestamp: number; // When client captured (ms from recording start)
-  serverTimestamp: number; // When server received (absolute timestamp)
-  size: number; // Chunk size in bytes
+  clientTimestamp: number; // Keep for debugging
+  serverReceiveTime: number; // ✅ Absolute server time when chunk received
+  serverRelativeTime: number; // ✅ Time relative to this participant's stream start
+  size: number;
 }
 
 // Timing gap analysis between two participants
+// Update the TimingGap interface
 interface TimingGap {
   chunkNumber: number;
   participant1Time: number | null;
   participant2Time: number | null;
-  difference: number | null; // Positive = P1 ahead, Negative = P2 ahead
+  difference: number | null;
   participant1Size?: number;
   participant2Size?: number;
-  missingParticipant?: 1 | 2; // Which participant is missing this chunk
+  participant1Latency?: number; // ✅ ADD THIS
+  participant2Latency?: number; // ✅ ADD THIS
+  missingParticipant?: 1 | 2;
 }
 
 interface RecordingMetadata {
@@ -84,13 +88,11 @@ export const localRecordingQueue = new Queue("local-recordings", {
   },
 });
 
-// Add this function to analyze timing differences
 const analyzeTimingGaps = (
-  participant1Chunks: any[],
-  participant2Chunks: any[]
-): any[] => {
-  const gaps = [];
-
+  participant1Chunks: ChunkTimestamp[],
+  participant2Chunks: ChunkTimestamp[]
+): TimingGap[] => {
+  const gaps: TimingGap[] = [];
   const maxChunks = Math.max(
     participant1Chunks.length,
     participant2Chunks.length
@@ -101,33 +103,34 @@ const analyzeTimingGaps = (
     const p2 = participant2Chunks[i];
 
     if (p1 && p2) {
-      const timeDiff = p1.clientTimestamp - p2.clientTimestamp;
+      // ✅ USE SERVER RELATIVE TIME INSTEAD OF CLIENT TIME
+      const timeDiff = p1.serverRelativeTime - p2.serverRelativeTime;
 
       gaps.push({
         chunkNumber: i + 1,
-        participant1Time: p1.clientTimestamp,
-        participant2Time: p2.clientTimestamp,
-        difference: timeDiff, // Positive = P1 ahead, Negative = P2 ahead
+        participant1Time: p1.serverRelativeTime,
+        participant2Time: p2.serverRelativeTime,
+        difference: timeDiff,
         participant1Size: p1.size,
         participant2Size: p2.size,
+        participant1Latency: p1.serverReceiveTime - (p1.clientTimestamp || 0),
+        participant2Latency: p2.serverReceiveTime - (p2.clientTimestamp || 0),
       });
     } else if (p1 && !p2) {
-      // Participant 2 missing this chunk
       gaps.push({
         chunkNumber: i + 1,
-        participant1Time: p1.clientTimestamp,
+        participant1Time: p1.serverRelativeTime,
         participant2Time: null,
         difference: null,
-        missingParticipant: 2,
+        missingParticipant: 2 as 1 | 2, // ✅ TYPE ASSERTION
       });
     } else if (!p1 && p2) {
-      // Participant 1 missing this chunk
       gaps.push({
         chunkNumber: i + 1,
         participant1Time: null,
-        participant2Time: p2.clientTimestamp,
+        participant2Time: p2.serverRelativeTime,
         difference: null,
-        missingParticipant: 1,
+        missingParticipant: 1 as 1 | 2, // ✅ TYPE ASSERTION
       });
     }
   }
@@ -1056,10 +1059,7 @@ export const chatController = async (
           const { meetingName, userName } = data;
 
           const session = await prisma.recordingSession.findFirst({
-            where: {
-              meetingName,
-              isRecording: true,
-            },
+            where: { meetingName, isRecording: true },
           });
 
           if (!session) {
@@ -1067,8 +1067,8 @@ export const chatController = async (
           }
 
           const recordingNumber = session.recordingNumber;
-
           const meetingDir = path.join(uploadsDir, meetingName);
+
           if (!fs.existsSync(meetingDir)) {
             fs.mkdirSync(meetingDir, { recursive: true });
           }
@@ -1094,7 +1094,9 @@ export const chatController = async (
           const participantNumber =
             meeting.participants.indexOf(participant) + 1;
 
-          const timestamp = Date.now();
+          // ✅ USE SERVER TIME AS SOURCE OF TRUTH
+          const serverStartTime = Date.now();
+
           const filepath = path.join(
             meetingDir,
             `recording-${recordingNumber}-participant-${participantNumber}.webm`
@@ -1102,18 +1104,32 @@ export const chatController = async (
 
           const streamInfo: AudioStreamInfo = {
             filepath,
-            startedAt: timestamp,
+            startedAt: serverStartTime, // Keep for backward compatibility
+            serverStartTime, // ✅ NEW: Explicit server start time
             participantNumber,
             recordingNumber,
           };
+
           await setAudioStreamInfo(meetingName, userName, streamInfo);
 
-          console.log(
-            `✅ Audio stream started: ${userName} (P${participantNumber}) recording #${recordingNumber}`
+          // ✅ STORE RECORDING START TIME IN REDIS FOR ALIGNMENT
+          const recordingStartKey = `recording-start:${meetingName}:${recordingNumber}`;
+          await redis.set(
+            recordingStartKey,
+            serverStartTime.toString(),
+            "EX",
+            7200
           );
-          console.log(`   File: ${filepath}`);
 
-          socket.emit("audio-stream-ready", { filepath, recordingNumber });
+          console.log(
+            `✅ Audio stream started: ${userName} (P${participantNumber}) at ${serverStartTime}`
+          );
+
+          socket.emit("audio-stream-ready", {
+            filepath,
+            recordingNumber,
+            serverStartTime, // Send to client for reference
+          });
         } catch (error) {
           console.error("❌ Error starting audio stream:", error);
           socket.emit("audio-stream-error", {
@@ -1123,56 +1139,14 @@ export const chatController = async (
       }
     );
 
-    // socket.on(
-    //   "audio-chunk",
-    //   async (data: {
-    //     meetingName: string;
-    //     userName: string;
-    //     chunk: Buffer;
-    //   }) => {
-    //     try {
-    //       const { meetingName, userName, chunk } = data;
-
-    //       const streamInfo = await getAudioStreamInfo(meetingName, userName);
-
-    //       if (!streamInfo) {
-    //         // ✅ CHECK GRACE PERIOD
-    //         const key = `${meetingName}:${userName}`;
-    //         const stoppedAt = recentlyStoppedStreams.get(key);
-
-    //         if (stoppedAt && Date.now() - stoppedAt < 2000) {
-    //           // Within 2s grace period - silently ignore late chunks
-    //           return;
-    //         }
-
-    //         // Only log if outside grace period
-    //         console.warn(
-    //           `⚠️ No active stream for ${userName} in ${meetingName}`
-    //         );
-    //         return;
-    //       }
-
-    //       const stream = getOrCreateWriteStream(socket.id, streamInfo.filepath);
-
-    //       if (stream.writable) {
-    //         stream.write(chunk);
-    //       } else {
-    //         console.warn(`⚠️ Write stream not writable for ${userName}`);
-    //       }
-    //     } catch (error) {
-    //       console.error("❌ Error writing audio chunk:", error);
-    //     }
-    //   }
-    // );
-
     socket.on(
       "audio-chunk",
       async (data: {
         meetingName: string;
         userName: string;
         chunk: Buffer;
-        timestamp: number; // ✅ Client's timestamp
-        chunkNumber: number; // ✅ Chunk sequence
+        timestamp: number;
+        chunkNumber: number;
       }) => {
         try {
           const { meetingName, userName, chunk, timestamp, chunkNumber } = data;
@@ -1199,11 +1173,16 @@ export const chatController = async (
             stream.write(chunk);
           }
 
-          // ✅ TRACK CHUNK ARRIVAL
-          const chunkInfo = {
+          // ✅ USE SERVER TIME FOR ALIGNMENT
+          const serverReceiveTime = Date.now();
+          const serverRelativeTime =
+            serverReceiveTime - streamInfo.serverStartTime;
+
+          const chunkInfo: ChunkTimestamp = {
             chunkNumber,
-            clientTimestamp: timestamp, // When client captured it
-            serverTimestamp: Date.now(), // When server received it
+            clientTimestamp: timestamp, // Keep for debugging/latency analysis
+            serverReceiveTime, // Absolute server time
+            serverRelativeTime, // Time since this participant's stream started
             size: chunk.byteLength,
           };
 
@@ -1214,12 +1193,13 @@ export const chatController = async (
           );
 
           await redis.rpush(timestampKey, JSON.stringify(chunkInfo));
-          await redis.expire(timestampKey, 172800); // 48 hours
+          await redis.expire(timestampKey, 172800);
 
-          // ✅ LOG EVERY 10 CHUNKS
           if (chunkNumber % 100 === 0) {
             console.log(
-              `📊 ${userName} chunk ${chunkNumber} @ ${timestamp}ms (${chunk.byteLength} bytes)`
+              `📊 ${userName} chunk ${chunkNumber} @ server time ${serverRelativeTime}ms (client: ${timestamp}ms, latency: ${
+                serverReceiveTime - (streamInfo.serverStartTime + timestamp)
+              }ms)`
             );
           }
         } catch (error) {
@@ -2061,7 +2041,6 @@ const mapUsernameToDbUser = async (
 
 const redis = new Redis(process.env.REDIS_URL);
 
-// ✅ DEFINE IT AGAIN IN THIS FILE (since it's separate)
 const getChunkTimestamps = async (
   meetingName: string,
   userName: string,
