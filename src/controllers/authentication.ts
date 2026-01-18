@@ -736,6 +736,15 @@ export const changePhoneNumber: RequestHandler = async (
         .json({ success: false, message: "User does not exists" });
     }
 
+    const checkUser = await prisma.user.findUnique({ where: { phone_number } });
+
+    if (checkUser) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is already associated with another account",
+      });
+    }
+
     if (!user.verified) {
       return res.status(400).json({
         success: false,
@@ -909,6 +918,127 @@ export const verifyChangePhoneNumberCode: RequestHandler = async (
       .json({ success: true, message: "Verified User successfully" });
   } catch (err) {
     logger.error(`Error in verifying the phone number: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const resendVerificationCodeToChangePhoneNumber: RequestHandler = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    let { phone_number }: { phone_number: string } = req.body;
+
+    if (!phone_number.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid inputs" });
+    }
+
+    const { isValid, normalized } =
+      validateAndNormalizePhoneNumber(phone_number);
+
+    if (!isValid) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number that you provided is not valid",
+      });
+    }
+
+    phone_number = normalized;
+
+    const cookietoken = req.cookies.authToken;
+    const { username }: { username: string } = jwt_decode(cookietoken);
+
+    const user = await prisma.user.findUnique({
+      where: { username, phone_number: phone_number },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "You are not registered with this phone number",
+      });
+    }
+
+    if (!user.verified) {
+      return res.status(400).json({
+        success: false,
+        message: "user is not verified",
+      });
+    }
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    if (
+      !user.sms_attempts_reset_at ||
+      new Date(user.sms_attempts_reset_at) < todayStart
+    ) {
+      await prisma.user.update({
+        where: { username },
+        data: {
+          sms_attempts_today: 0,
+          sms_attempts_reset_at: todayStart.toISOString(),
+        },
+      });
+    }
+
+    if (user.sms_attempts_today >= 5) {
+      return res.status(429).json({
+        success: false,
+        message:
+          "Too many verification attempts today. Please try again tomorrow.",
+      });
+    }
+
+    if (user.verification_token_expiry) {
+      const now = new Date();
+      const expiry = new Date(user.verification_token_expiry);
+
+      if (now < expiry) {
+        const remainingSeconds = Math.ceil(
+          (expiry.getTime() - now.getTime()) / 1000
+        );
+
+        return res.status(400).json({
+          success: false,
+          message: `A verification code is already sent. Try again after ${remainingSeconds} seconds.`,
+        });
+      }
+    }
+
+    const { verificationToken, token, code } = generateVerificationCode();
+
+    const currentDate = new Date();
+    const next2Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
+
+    await twilio_client.messages.create({
+      body: `Your Sunain code is ${code}`,
+      from: process.env.TWILIO_ACCOUNT_PHONE_NUMBER,
+      to: phone_number,
+    });
+
+    await prisma.user.update({
+      where: { username },
+      data: {
+        verification_secret: token,
+        verification_token: verificationToken,
+        verification_token_expiry: next2Minutes.toISOString(),
+        sms_attempts_today: user.sms_attempts_today + 1,
+      },
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Message resent successfully" });
+  } catch (err) {
+    logger.error(`Error in re-sending the verification code: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }
