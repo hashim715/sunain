@@ -162,7 +162,6 @@ export const register: RequestHandler = async (req: Request, res: Response) => {
         .status(400)
         .json({ success: false, message: "Please provide valid inputs" });
     }
-    console.log(email, password);
 
     if (!validateEmail(email)) {
       return res.status(400).json({
@@ -204,15 +203,15 @@ export const register: RequestHandler = async (req: Request, res: Response) => {
 
     console.log(code);
 
-    // const mailOptions = {
-    //   from: process.env.EMAIL_FROM,
-    //   to: email,
-    //   subject: "Hello from CourseX",
-    //   text: "Verify your Email",
-    //   html: `<h1>Your verification code is: ${code}</h1></br><p>Click on the link given below:<a>https://coursex.us/app/verification/${email}/verify</a></p>`,
-    // };
+    const mailOptions = {
+      from: process.env.EMAIL_FROM,
+      to: email,
+      subject: "Hello from Sunain",
+      text: "Verify your Email",
+      html: `<h1>Your verification code is: ${code}</h1></br><p>Click on the link given below:<a>https://coursex.us/app/verification/${email}/verify</a></p>`,
+    };
 
-    // await email_transporter.sendMail(mailOptions);
+    await email_transporter.sendMail(mailOptions);
 
     user = await prisma.user.create({
       data: {
@@ -453,15 +452,15 @@ export const resendCodeToEmail: RequestHandler = async (
 
     console.log(code);
 
-    // const mailOptions = {
-    //   from: process.env.EMAIL_FROM,
-    //   to: email,
-    //   subject: "Hello from CourseX",
-    //   text: "Verify your Email",
-    //   html: `<h1>Your verification code is: ${code}</h1></br><p>Click on the link given below:<a>https://coursex.us/app/verification/${email}/verify</a></p>`,
-    // };
+    const mailOptions = {
+      from: process.env.EMAIL_FROM,
+      to: email,
+      subject: "Hello from Sunain",
+      text: "Verify your Email",
+      html: `<h1>Your verification code is: ${code}</h1></br><p>Click on the link given below:<a>https://coursex.us/app/verification/${email}/verify</a></p>`,
+    };
 
-    // await email_transporter.sendMail(mailOptions);
+    await email_transporter.sendMail(mailOptions);
 
     await prisma.user.update({
       where: { email: email },
