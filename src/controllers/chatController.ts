@@ -43,6 +43,7 @@ interface ChunkTimestamp {
   serverReceiveTime: number; // ✅ Absolute server time when chunk received
   serverRelativeTime: number; // ✅ Time relative to this participant's stream start
   size: number;
+  estimatedDuration?: number; // ✅ NEW: Duration of this chunk in ms
 }
 
 // Timing gap analysis between two participants
@@ -1173,33 +1174,53 @@ export const chatController = async (
             stream.write(chunk);
           }
 
-          // ✅ USE SERVER TIME FOR ALIGNMENT
           const serverReceiveTime = Date.now();
           const serverRelativeTime =
             serverReceiveTime - streamInfo.serverStartTime;
 
-          const chunkInfo: ChunkTimestamp = {
-            chunkNumber,
-            clientTimestamp: timestamp, // Keep for debugging/latency analysis
-            serverReceiveTime, // Absolute server time
-            serverRelativeTime, // Time since this participant's stream started
-            size: chunk.byteLength,
-          };
-
+          // ✅ CALCULATE DURATION FROM PREVIOUS CHUNK
           const timestampKey = REDIS_KEYS.chunkTimestamps(
             meetingName,
             userName,
             streamInfo.recordingNumber
           );
 
+          // Get the previous chunk to calculate duration
+          const previousChunks = await redis.lrange(timestampKey, -1, -1); // Get last chunk
+          let estimatedDuration = 0;
+
+          if (previousChunks.length > 0 && chunkNumber > 1) {
+            const prevChunk: ChunkTimestamp = JSON.parse(previousChunks[0]);
+
+            // Duration = current timestamp - previous timestamp
+            estimatedDuration =
+              serverRelativeTime - prevChunk.serverRelativeTime;
+
+            console.log(
+              `📊 Chunk ${chunkNumber} duration: ${estimatedDuration}ms (from chunk ${
+                chunkNumber - 1
+              })`
+            );
+          } else {
+            // First chunk - use default estimate or time since start
+            estimatedDuration = serverRelativeTime;
+          }
+
+          const chunkInfo: ChunkTimestamp = {
+            chunkNumber,
+            clientTimestamp: timestamp,
+            serverReceiveTime,
+            serverRelativeTime,
+            size: chunk.byteLength,
+            estimatedDuration, // ✅ ADD DURATION
+          };
+
           await redis.rpush(timestampKey, JSON.stringify(chunkInfo));
           await redis.expire(timestampKey, 172800);
 
           if (chunkNumber % 100 === 0) {
             console.log(
-              `📊 ${userName} chunk ${chunkNumber} @ server time ${serverRelativeTime}ms (client: ${timestamp}ms, latency: ${
-                serverReceiveTime - (streamInfo.serverStartTime + timestamp)
-              }ms)`
+              `📊 ${userName} chunk ${chunkNumber} @ ${serverRelativeTime}ms (duration: ${estimatedDuration}ms, ${chunk.byteLength} bytes)`
             );
           }
         } catch (error) {
@@ -1765,7 +1786,9 @@ export const chatController = async (
         const allParticipants = meeting.participants.map(
           (p: { user: { username: string } }) => p.user.username
         );
-        const otherParticipants = allParticipants.filter((p: string) => p !== userName);
+        const otherParticipants = allParticipants.filter(
+          (p: string) => p !== userName
+        );
 
         const readinessState = {
           hostReady: true,
@@ -2069,7 +2092,9 @@ localRecordingQueue.process("process-local-recording", async (job: any) => {
       throw new Error(`Meeting not found: ${meetingName}`);
     }
 
-    const dialects = meeting.participants.map((p: { dialect: string | null }) => p.dialect || "Unknown");
+    const dialects = meeting.participants.map(
+      (p: { dialect: string | null }) => p.dialect || "Unknown"
+    );
 
     let session = await prisma.recordingSession.findFirst({
       where: {
