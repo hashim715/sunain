@@ -1170,7 +1170,7 @@ export const chatController = async (
       async (data: {
         meetingName: string;
         userName: string;
-        chunk: Buffer;
+        chunk: any;
         timestamp: number;
         chunkNumber: number;
       }) => {
@@ -1193,10 +1193,30 @@ export const chatController = async (
             return;
           }
 
+          // ✅ CONVERT TO PROPER BUFFER
+          let audioBuffer: Buffer;
+
+          if (Buffer.isBuffer(chunk)) {
+            audioBuffer = chunk;
+          } else if (chunk instanceof ArrayBuffer) {
+            audioBuffer = Buffer.from(chunk);
+          } else if (Array.isArray(chunk)) {
+            audioBuffer = Buffer.from(chunk);
+          } else if (chunk?.type === "Buffer" && Array.isArray(chunk?.data)) {
+            // Socket.IO sometimes sends buffers as {type: 'Buffer', data: [...]}
+            audioBuffer = Buffer.from(chunk.data);
+          } else {
+            console.error(
+              `❌ Unknown chunk type for ${userName}:`,
+              typeof chunk
+            );
+            return;
+          }
+
           const stream = getOrCreateWriteStream(socket.id, streamInfo.filepath);
 
           if (stream.writable) {
-            stream.write(chunk);
+            stream.write(audioBuffer);
           }
 
           const serverReceiveTime = Date.now();
@@ -1229,15 +1249,12 @@ export const chatController = async (
               `chunk-${String(chunkNumber).padStart(5, "0")}.webm`
             );
 
-            // Write chunk to temp file
-            fs.writeFileSync(tempChunkPath, chunk);
+            // Write chunk to temp file - USE audioBuffer NOT chunk
+            fs.writeFileSync(tempChunkPath, audioBuffer);
 
             // Probe the individual chunk
             const duration = await getAudioDuration(tempChunkPath);
             chunkDuration = Math.round(duration * 1000); // Convert to ms
-
-            // ✅ COMMENTED OUT - Delete temp file immediately
-            // fs.unlinkSync(tempChunkPath);
 
             console.log(
               `🎵 Chunk ${chunkNumber}: individual duration = ${chunkDuration}ms (saved to ${tempChunkPath})`
@@ -1255,7 +1272,7 @@ export const chatController = async (
             clientTimestamp: timestamp,
             serverReceiveTime,
             serverRelativeTime,
-            size: chunk.byteLength,
+            size: audioBuffer.byteLength, // ✅ Use audioBuffer.byteLength
             estimatedDuration: chunkDuration,
           };
 
@@ -1270,7 +1287,7 @@ export const chatController = async (
 
           if (chunkNumber % 100 === 0) {
             console.log(
-              `📊 ${userName} chunk ${chunkNumber} @ ${serverRelativeTime}ms (chunk duration: ${chunkDuration}ms, ${chunk.byteLength} bytes)`
+              `📊 ${userName} chunk ${chunkNumber} @ ${serverRelativeTime}ms (chunk duration: ${chunkDuration}ms, ${audioBuffer.byteLength} bytes)`
             );
           }
         } catch (error) {
