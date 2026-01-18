@@ -201,14 +201,56 @@ export const register: RequestHandler = async (req: Request, res: Response) => {
     const currentDate = new Date();
     const next2Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
 
-    console.log(code);
-
     const mailOptions = {
       from: process.env.EMAIL_FROM,
       to: email,
-      subject: "Hello from Sunain",
-      text: "Verify your Email",
-      html: `<h1>Your verification code is: ${code}</h1></br><p>Click on the link given below:<a>https://coursex.us/app/verification/${email}/verify</a></p>`,
+      subject: "Verify Your Email - Sunain",
+      text: `Your verification code is: ${code}\n\nVerify here: https://sunain.com/verify-email/${email}/`,
+      html: `
+      <div style="background-color:#f4f6f8;padding:40px 0;font-family:Arial,Helvetica,sans-serif;">
+        <div style="max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);padding:30px;">
+          
+          <h2 style="color:#2c3e50;text-align:center;margin-bottom:20px;">
+            Welcome to <span style="color:#007bff;">Sunain</span>
+          </h2>
+    
+          <p style="color:#555;font-size:16px;line-height:1.5;">
+            Hi there,
+          </p>
+    
+          <p style="color:#555;font-size:16px;line-height:1.5;">
+            Thank you for signing up with Sunain. Please use the verification code below to confirm your email address:
+          </p>
+    
+          <div style="text-align:center;margin:30px 0;">
+            <span style="display:inline-block;background-color:#f1f3f5;color:#000;padding:15px 30px;font-size:24px;letter-spacing:4px;border-radius:6px;font-weight:bold;">
+              ${code}
+            </span>
+          </div>
+    
+          <p style="color:#555;font-size:16px;line-height:1.5;">
+            Or you can verify your email by clicking the button below:
+          </p>
+    
+          <div style="text-align:center;margin:30px 0;">
+            <a href="https://sunain.com/verify-email/${email}/"
+               style="background-color:#007bff;color:#ffffff;text-decoration:none;padding:12px 25px;border-radius:6px;font-size:16px;display:inline-block;">
+              Verify Email
+            </a>
+          </div>
+    
+          <p style="color:#888;font-size:14px;line-height:1.5;">
+            If you did not request this, please ignore this email. Your account will remain secure.
+          </p>
+    
+          <hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
+    
+          <p style="color:#aaa;font-size:12px;text-align:center;">
+            © ${new Date().getFullYear()} Sunain. All rights reserved.
+          </p>
+        </div>
+      </div>
+      `,
     };
 
     await email_transporter.sendMail(mailOptions);
@@ -450,14 +492,56 @@ export const resendCodeToEmail: RequestHandler = async (
     const currentDate = new Date();
     const next2Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
 
-    console.log(code);
-
     const mailOptions = {
       from: process.env.EMAIL_FROM,
       to: email,
-      subject: "Hello from Sunain",
-      text: "Verify your Email",
-      html: `<h1>Your verification code is: ${code}</h1></br><p>Click on the link given below:<a>https://coursex.us/app/verification/${email}/verify</a></p>`,
+      subject: "Verify Your Email - Sunain",
+      text: `Your verification code is: ${code}\n\nVerify here: https://sunain.com/verify-email/${email}/`,
+      html: `
+      <div style="background-color:#f4f6f8;padding:40px 0;font-family:Arial,Helvetica,sans-serif;">
+        <div style="max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);padding:30px;">
+          
+          <h2 style="color:#2c3e50;text-align:center;margin-bottom:20px;">
+            Welcome to <span style="color:#007bff;">Sunain</span>
+          </h2>
+    
+          <p style="color:#555;font-size:16px;line-height:1.5;">
+            Hi there,
+          </p>
+    
+          <p style="color:#555;font-size:16px;line-height:1.5;">
+            Thank you for signing up with Sunain. Please use the verification code below to confirm your email address:
+          </p>
+    
+          <div style="text-align:center;margin:30px 0;">
+            <span style="display:inline-block;background-color:#f1f3f5;color:#000;padding:15px 30px;font-size:24px;letter-spacing:4px;border-radius:6px;font-weight:bold;">
+              ${code}
+            </span>
+          </div>
+    
+          <p style="color:#555;font-size:16px;line-height:1.5;">
+            Or you can verify your email by clicking the button below:
+          </p>
+    
+          <div style="text-align:center;margin:30px 0;">
+            <a href="https://sunain.com/verify-email/${email}/"
+               style="background-color:#007bff;color:#ffffff;text-decoration:none;padding:12px 25px;border-radius:6px;font-size:16px;display:inline-block;">
+              Verify Email
+            </a>
+          </div>
+    
+          <p style="color:#888;font-size:14px;line-height:1.5;">
+            If you did not request this, please ignore this email. Your account will remain secure.
+          </p>
+    
+          <hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
+    
+          <p style="color:#aaa;font-size:12px;text-align:center;">
+            © ${new Date().getFullYear()} Sunain. All rights reserved.
+          </p>
+        </div>
+      </div>
+      `,
     };
 
     await email_transporter.sendMail(mailOptions);
@@ -489,27 +573,271 @@ export const changePhoneNumber: RequestHandler = async (
   res: Response
 ) => {
   try {
-    const { password }: { password: string } = req.body;
+    let { phone_number }: { phone_number: string } = req.body;
 
-    const token = req.cookies.authToken;
-
-    if (!token) {
+    if (!phone_number.trim()) {
       return res
-        .status(404)
-        .json({ success: false, message: "User does not exists" });
+        .status(400)
+        .json({ success: false, message: "Please provide valid inputs" });
     }
 
-    const { username }: { username: string } = jwt_decode(token);
+    if (!validatePhoneNumber(phone_number)) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number that you provided is not valid",
+      });
+    }
 
-    const user = await prisma.user.findFirst({ where: { username: username } });
+    const cookietoken = req.cookies.authToken;
+    const { username }: { username: string } = jwt_decode(cookietoken);
+
+    const user = await prisma.user.findFirst({ where: { username } });
 
     if (!user) {
       return res
         .status(404)
         .json({ success: false, message: "User does not exists" });
     }
+
+    if (!user.verified) {
+      return res.status(400).json({
+        success: false,
+        message: "user is not verified",
+      });
+    }
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    if (
+      !user.sms_attempts_reset_at ||
+      new Date(user.sms_attempts_reset_at) < todayStart
+    ) {
+      await prisma.user.update({
+        where: { username },
+        data: {
+          sms_attempts_today: 0,
+          sms_attempts_reset_at: todayStart.toISOString(),
+        },
+      });
+    }
+
+    if (user.sms_attempts_today >= 5) {
+      return res.status(429).json({
+        success: false,
+        message:
+          "Too many verification attempts today. Please try again tomorrow.",
+      });
+    }
+
+    if (user.verification_token_expiry) {
+      const now = new Date();
+      const expiry = new Date(user.verification_token_expiry);
+
+      if (now < expiry) {
+        const remainingSeconds = Math.ceil(
+          (expiry.getTime() - now.getTime()) / 1000
+        );
+
+        return res.status(400).json({
+          success: false,
+          message: `A verification code is already sent. Try again after ${remainingSeconds} seconds.`,
+        });
+      }
+    }
+
+    const { verificationToken, token, code } = generateVerificationCode();
+
+    const currentDate = new Date();
+    const next2Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
+
+    await twilio_client.messages.create({
+      body: `Your Sunain code is ${code}`,
+      from: process.env.TWILIO_ACCOUNT_PHONE_NUMBER,
+      to: phone_number,
+    });
+
+    await prisma.user.update({
+      where: { username },
+      data: {
+        verification_secret: token,
+        verification_token: verificationToken,
+        verification_token_expiry: next2Minutes.toISOString(),
+        sms_attempts_today: user.sms_attempts_today + 1,
+      },
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Message sent successfully" });
   } catch (err) {
     logger.error(`Error in getting user: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const verifyChangePhoneNumberCode: RequestHandler = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const {
+      code,
+    }: {
+      code: string;
+    } = req.body;
+
+    let { phone_number }: { phone_number: string } = req.body;
+
+    if (!code.trim() || !phone_number.trim() || code.length < 6) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid inputs" });
+    }
+
+    if (!validatePhoneNumber(phone_number)) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number that you provided is not valid",
+      });
+    }
+
+    const cookietoken = req.cookies.authToken;
+    const { username }: { username: string } = jwt_decode(cookietoken);
+
+    const user = await prisma.user.findFirst({ where: { username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    if (!user.verified) {
+      return res
+        .status(400)
+        .json({ success: false, message: "user is not verified" });
+    }
+
+    const verification_token = crypto
+      .createHash("sha256")
+      .update(code + user.verification_secret)
+      .digest("hex");
+
+    if (user.verification_token !== verification_token) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Code did not match" });
+    }
+
+    if (Date.now() > new Date(user.verification_token_expiry).getTime()) {
+      await prisma.user.update({
+        where: { username: username },
+        data: {
+          verification_secret: null,
+          verification_token: null,
+          verification_token_expiry: null,
+        },
+      });
+      return res.status(400).json({
+        success: false,
+        message: "Your verification token is expired not valid",
+      });
+    }
+
+    await prisma.user.update({
+      where: { username: username },
+      data: {
+        verified: true,
+        verification_secret: null,
+        verification_token: null,
+        verification_token_expiry: null,
+        details_added: user.details_added,
+        phone_number: phone_number,
+      },
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Verified User successfully" });
+  } catch (err) {
+    logger.error(`Error in verifying the phone number: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const changePassword: RequestHandler = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const {
+      oldPassword,
+      newPassword,
+    }: { oldPassword: string; newPassword: string } = req.body;
+
+    if (!oldPassword || !newPassword) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid inputs" });
+    }
+
+    const cookietoken = req.cookies.authToken;
+    const { username }: { username: string } = jwt_decode(cookietoken);
+
+    const user = await prisma.user.findFirst({ where: { username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    if (
+      !user.verified ||
+      !user.email_verified ||
+      user.google_login ||
+      !user.details_added
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, message: "user can not change the password" });
+    }
+
+    const isValid = await bcrypt.compare(oldPassword, user.password);
+
+    if (!isValid) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid password",
+      });
+    }
+
+    const saltRounds = 10;
+    const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+    await prisma.user.update({
+      where: { username: username },
+      data: {
+        password: hashedPassword,
+      },
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Password changed successfully" });
+  } catch (err) {
+    logger.error(`Error in changing password: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }

@@ -12,6 +12,9 @@ import {
   login,
   verifyEmail,
   resendCodeToEmail,
+  changePassword,
+  changePhoneNumber,
+  verifyChangePhoneNumberCode,
 } from "../controllers/authentication";
 import { protect } from "../middleware/middleware";
 
@@ -32,3 +35,8 @@ authRouter
 authRouter
   .route("/verify-phone-number")
   .post(protect, verifyPhoneNumberOnLogin);
+authRouter.route("/change-password").post(protect, changePassword);
+authRouter.route("/change-phone-number").post(protect, changePhoneNumber);
+authRouter
+  .route("/verify-change-phone-number")
+  .post(protect, verifyChangePhoneNumberCode);
