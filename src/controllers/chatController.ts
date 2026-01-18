@@ -1083,9 +1083,13 @@ export const chatController = async (
 
     socket.on(
       "start-audio-stream",
-      async (data: { meetingName: string; userName: string }) => {
+      async (data: {
+        meetingName: string;
+        userName: string;
+        recordingStartTime: number;
+      }) => {
         try {
-          const { meetingName, userName } = data;
+          const { meetingName, userName, recordingStartTime } = data;
 
           const session = await prisma.recordingSession.findFirst({
             where: { meetingName, isRecording: true },
@@ -1124,7 +1128,8 @@ export const chatController = async (
             meeting.participants.indexOf(participant) + 1;
 
           // ✅ USE SERVER TIME AS SOURCE OF TRUTH
-          const serverStartTime = Date.now();
+          // const serverStartTime = Date.now();
+          const serverStartTime = recordingStartTime;
 
           const filepath = path.join(
             meetingDir,
@@ -1223,7 +1228,8 @@ export const chatController = async (
             stream.write(audioBuffer);
           }
 
-          const serverReceiveTime = Date.now();
+          // const serverReceiveTime = Date.now();
+          const serverReceiveTime = timestamp;
           const serverRelativeTime =
             serverReceiveTime - streamInfo.serverStartTime;
 
