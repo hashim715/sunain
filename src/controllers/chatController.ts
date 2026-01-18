@@ -1203,13 +1203,30 @@ export const chatController = async (
           const serverRelativeTime =
             serverReceiveTime - streamInfo.serverStartTime;
 
-          // ✅ SAVE CHUNK TEMPORARILY TO PROBE IT
+          // ✅ CREATE TEMP CHUNKS DIRECTORY STRUCTURE
+          const tempChunksBaseDir = path.join(__dirname, "..", "temp-chunks");
+          const tempChunksMeetingDir = path.join(
+            tempChunksBaseDir,
+            meetingName
+          );
+          const tempChunksParticipantDir = path.join(
+            tempChunksMeetingDir,
+            `recording-${streamInfo.recordingNumber}`,
+            `participant-${streamInfo.participantNumber}-${userName}`
+          );
+
+          // Ensure directory exists
+          if (!fs.existsSync(tempChunksParticipantDir)) {
+            fs.mkdirSync(tempChunksParticipantDir, { recursive: true });
+          }
+
+          // ✅ SAVE CHUNK WITH ORGANIZED NAMING
           let chunkDuration = 0;
 
           try {
             const tempChunkPath = path.join(
-              uploadsDir,
-              `temp-chunk-${meetingName}-${userName}-${chunkNumber}.webm`
+              tempChunksParticipantDir,
+              `chunk-${String(chunkNumber).padStart(5, "0")}.webm`
             );
 
             // Write chunk to temp file
@@ -1219,11 +1236,11 @@ export const chatController = async (
             const duration = await getAudioDuration(tempChunkPath);
             chunkDuration = Math.round(duration * 1000); // Convert to ms
 
-            // Delete temp file immediately
-            fs.unlinkSync(tempChunkPath);
+            // ✅ COMMENTED OUT - Delete temp file immediately
+            // fs.unlinkSync(tempChunkPath);
 
             console.log(
-              `🎵 Chunk ${chunkNumber}: individual duration = ${chunkDuration}ms`
+              `🎵 Chunk ${chunkNumber}: individual duration = ${chunkDuration}ms (saved to ${tempChunkPath})`
             );
           } catch (probeError) {
             console.warn(
@@ -1239,7 +1256,7 @@ export const chatController = async (
             serverReceiveTime,
             serverRelativeTime,
             size: chunk.byteLength,
-            estimatedDuration: chunkDuration, // ✅ NOW CONTAINS ACTUAL INDIVIDUAL CHUNK DURATION
+            estimatedDuration: chunkDuration,
           };
 
           const timestampKey = REDIS_KEYS.chunkTimestamps(
