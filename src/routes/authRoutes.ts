@@ -15,6 +15,7 @@ import {
   changePassword,
   changePhoneNumber,
   verifyChangePhoneNumberCode,
+  resendVerificationCodeToPhoneNumber,
 } from "../controllers/authentication";
 import { protect } from "../middleware/middleware";
 
@@ -32,6 +33,9 @@ authRouter.route("/refresh").post(refreshToken);
 authRouter
   .route("/send-verification-code")
   .post(protect, sendVerificationCodeToPhoneNumber);
+authRouter
+  .route("/resend-verification-code")
+  .post(protect, resendVerificationCodeToPhoneNumber);
 authRouter
   .route("/verify-phone-number")
   .post(protect, verifyPhoneNumberOnLogin);

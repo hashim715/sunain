@@ -1,15 +1,30 @@
-import { isValidPhoneNumber } from "libphonenumber-js";
+import {
+  parsePhoneNumberFromString,
+  isValidPhoneNumber,
+} from "libphonenumber-js";
 
-export const validatePhoneNumber = (number: string, country?: string) => {
+export const validateAndNormalizePhoneNumber = (
+  phoneNumber: string
+): {
+  isValid: boolean;
+  normalized: string | null;
+} => {
   try {
-    if (country) {
-      return isValidPhoneNumber(number);
+    if (!isValidPhoneNumber(phoneNumber)) {
+      return { isValid: false, normalized: null };
     }
 
-    return isValidPhoneNumber(number);
+    const parsedNumber = parsePhoneNumberFromString(phoneNumber);
+
+    if (!parsedNumber) {
+      return { isValid: false, normalized: null };
+    }
+
+    return {
+      isValid: true,
+      normalized: parsedNumber.number,
+    };
   } catch (error) {
-    return false;
+    return { isValid: false, normalized: null };
   }
 };
-
-// console.log(validatePhoneNumber("+923163070715"));

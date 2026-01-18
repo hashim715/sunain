@@ -9,7 +9,7 @@ import { internalServerError, badRequestResponse } from "./errors";
 import { logger } from "../utils/logger";
 import { generateVerificationCode } from "../utils/getVerificationCode";
 import { twilio_client } from "../utils/twilioClient";
-import { validatePhoneNumber } from "../utils/validatePhoneNumber";
+import { validateAndNormalizePhoneNumber } from "../utils/validatePhoneNumber";
 import crypto from "crypto";
 import { validateEmail } from "../utils/checkvalidEmail";
 import { email_transporter } from "../utils/sendEmail";
@@ -201,54 +201,121 @@ export const register: RequestHandler = async (req: Request, res: Response) => {
     const currentDate = new Date();
     const next2Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
 
+    const verifyUrl = `https://sunain.com/verify-email/${encodeURIComponent(
+      email
+    )}/`;
+
     const mailOptions = {
       from: process.env.EMAIL_FROM,
       to: email,
-      subject: "Verify Your Email - Sunain",
-      text: `Your verification code is: ${code}\n\nVerify here: https://sunain.com/verify-email/${email}/`,
+      subject: "Verify your email — Sunain",
+      text: `Verify your email for Sunain
+    
+    Your verification code:
+    ${code}
+    
+    Or verify here:
+    ${verifyUrl}
+    
+    If you didn’t create a Sunain account, you can safely ignore this email.`,
       html: `
-      <div style="background-color:#f4f6f8;padding:40px 0;font-family:Arial,Helvetica,sans-serif;">
-        <div style="max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);padding:30px;">
-          
-          <h2 style="color:#2c3e50;text-align:center;margin-bottom:20px;">
-            Welcome to <span style="color:#007bff;">Sunain</span>
-          </h2>
-    
-          <p style="color:#555;font-size:16px;line-height:1.5;">
-            Hi there,
-          </p>
-    
-          <p style="color:#555;font-size:16px;line-height:1.5;">
-            Thank you for signing up with Sunain. Please use the verification code below to confirm your email address:
-          </p>
-    
-          <div style="text-align:center;margin:30px 0;">
-            <span style="display:inline-block;background-color:#f1f3f5;color:#000;padding:15px 30px;font-size:24px;letter-spacing:4px;border-radius:6px;font-weight:bold;">
-              ${code}
-            </span>
-          </div>
-    
-          <p style="color:#555;font-size:16px;line-height:1.5;">
-            Or you can verify your email by clicking the button below:
-          </p>
-    
-          <div style="text-align:center;margin:30px 0;">
-            <a href="https://sunain.com/verify-email/${email}/"
-               style="background-color:#007bff;color:#ffffff;text-decoration:none;padding:12px 25px;border-radius:6px;font-size:16px;display:inline-block;">
-              Verify Email
-            </a>
-          </div>
-    
-          <p style="color:#888;font-size:14px;line-height:1.5;">
-            If you did not request this, please ignore this email. Your account will remain secure.
-          </p>
-    
-          <hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
-    
-          <p style="color:#aaa;font-size:12px;text-align:center;">
-            © ${new Date().getFullYear()} Sunain. All rights reserved.
-          </p>
+      <div style="margin:0;padding:0;background:#f5f5f7;">
+        <!-- Preheader -->
+        <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+          Your Sunain verification code is ${String(code)}.
         </div>
+    
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f5f7;padding:40px 0;">
+          <tr>
+            <td align="center" style="padding:0 16px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
+                <!-- Brand -->
+                <tr>
+                  <td align="center" style="padding:10px 8px 18px 8px;">
+                    <div style="font-family:Helvetica,Arial,sans-serif;font-size:13px;letter-spacing:0.6px;color:#6e6e73;">
+                      SUNAIN
+                    </div>
+                  </td>
+                </tr>
+    
+                <!-- Card -->
+                <tr>
+                  <td style="background:#ffffff;border:1px solid #e5e5ea;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,0.07);">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="padding:30px 26px 26px 26px;font-family:Helvetica,Arial,sans-serif;">
+                          <div style="font-size:24px;line-height:1.25;font-weight:700;color:#1d1d1f;margin:0 0 10px 0;">
+                            Verify your email
+                          </div>
+    
+                          <div style="font-size:15px;line-height:1.65;color:#1d1d1f;margin:0 0 18px 0;">
+                            Welcome to Sunain. Confirming your email keeps your account secure and ensures you can receive important updates.
+                          </div>
+    
+                          <!-- Code -->
+                          <div style="text-align:center;margin:18px 0 10px 0;">
+                            <div style="display:inline-block;background:#f5f5f7;border:1px solid #e5e5ea;border-radius:16px;padding:16px 18px;">
+                              <span style="font-family:Helvetica,Arial,sans-serif;font-size:28px;letter-spacing:8px;font-weight:700;color:#111111;">
+                                ${String(code)}
+                              </span>
+                            </div>
+                          </div>
+    
+                          <div style="font-size:13px;line-height:1.55;color:#6e6e73;text-align:center;margin:0 0 22px 0;">
+                            This code expires soon for your security.
+                          </div>
+    
+                          <!-- Button -->
+                          <div style="text-align:center;margin:0 0 18px 0;">
+                            <!--[if mso]>
+                              <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="${verifyUrl}" style="height:44px;v-text-anchor:middle;width:210px;" arcsize="28%" stroke="f" fillcolor="#FF0558">
+                                <w:anchorlock/>
+                                <center style="color:#ffffff;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;">
+                                  Verify email
+                                </center>
+                              </v:roundrect>
+                            <![endif]-->
+                            <!--[if !mso]><!-- -->
+                              <a href="${verifyUrl}"
+                                style="display:inline-block;background:#FF0558;color:#ffffff;text-decoration:none;padding:14px 22px;border-radius:14px;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:1;">
+                                Verify email
+                              </a>
+                            <!--<![endif]-->
+                          </div>
+    
+                          <!-- Fallback link -->
+                          <div style="font-size:12px;line-height:1.6;color:#6e6e73;margin:0;">
+                            If the button doesn’t work, copy and paste this link into your browser:
+                            <br>
+                            <a href="${verifyUrl}" style="color:#007aff;text-decoration:none;word-break:break-all;">
+                              ${verifyUrl}
+                            </a>
+                          </div>
+    
+                          <hr style="border:none;border-top:1px solid #e5e5ea;margin:22px 0;">
+    
+                          <div style="font-size:12px;line-height:1.55;color:#8e8e93;margin:0;">
+                            If you didn’t request this, no action is required. You can safely ignore this email.
+                          </div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+    
+                <!-- Footer -->
+                <tr>
+                  <td align="center" style="padding:16px 8px 0 8px;">
+                    <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;line-height:1.5;color:#8e8e93;">
+                      © ${new Date().getFullYear()} Sunain. All rights reserved.
+                    </div>
+                  </td>
+                </tr>
+    
+              </table>
+            </td>
+          </tr>
+        </table>
       </div>
       `,
     };
@@ -490,54 +557,121 @@ export const resendCodeToEmail: RequestHandler = async (
     const currentDate = new Date();
     const next2Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
 
+    const verifyUrl = `https://sunain.com/verify-email/${encodeURIComponent(
+      email
+    )}/`;
+
     const mailOptions = {
       from: process.env.EMAIL_FROM,
       to: email,
-      subject: "Verify Your Email - Sunain",
-      text: `Your verification code is: ${code}\n\nVerify here: https://sunain.com/verify-email/${email}/`,
+      subject: "Verify your email — Sunain",
+      text: `Verify your email for Sunain
+    
+    Your verification code:
+    ${code}
+    
+    Or verify here:
+    ${verifyUrl}
+    
+    If you didn’t create a Sunain account, you can safely ignore this email.`,
       html: `
-      <div style="background-color:#f4f6f8;padding:40px 0;font-family:Arial,Helvetica,sans-serif;">
-        <div style="max-width:600px;margin:0 auto;background-color:#ffffff;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);padding:30px;">
-          
-          <h2 style="color:#2c3e50;text-align:center;margin-bottom:20px;">
-            Welcome to <span style="color:#007bff;">Sunain</span>
-          </h2>
-    
-          <p style="color:#555;font-size:16px;line-height:1.5;">
-            Hi there,
-          </p>
-    
-          <p style="color:#555;font-size:16px;line-height:1.5;">
-            Thank you for signing up with Sunain. Please use the verification code below to confirm your email address:
-          </p>
-    
-          <div style="text-align:center;margin:30px 0;">
-            <span style="display:inline-block;background-color:#f1f3f5;color:#000;padding:15px 30px;font-size:24px;letter-spacing:4px;border-radius:6px;font-weight:bold;">
-              ${code}
-            </span>
-          </div>
-    
-          <p style="color:#555;font-size:16px;line-height:1.5;">
-            Or you can verify your email by clicking the button below:
-          </p>
-    
-          <div style="text-align:center;margin:30px 0;">
-            <a href="https://sunain.com/verify-email/${email}/"
-               style="background-color:#007bff;color:#ffffff;text-decoration:none;padding:12px 25px;border-radius:6px;font-size:16px;display:inline-block;">
-              Verify Email
-            </a>
-          </div>
-    
-          <p style="color:#888;font-size:14px;line-height:1.5;">
-            If you did not request this, please ignore this email. Your account will remain secure.
-          </p>
-    
-          <hr style="border:none;border-top:1px solid #eee;margin:30px 0;">
-    
-          <p style="color:#aaa;font-size:12px;text-align:center;">
-            © ${new Date().getFullYear()} Sunain. All rights reserved.
-          </p>
+      <div style="margin:0;padding:0;background:#f5f5f7;">
+        <!-- Preheader -->
+        <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+          Your Sunain verification code is ${String(code)}.
         </div>
+    
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f5f7;padding:40px 0;">
+          <tr>
+            <td align="center" style="padding:0 16px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
+                <!-- Brand -->
+                <tr>
+                  <td align="center" style="padding:10px 8px 18px 8px;">
+                    <div style="font-family:Helvetica,Arial,sans-serif;font-size:13px;letter-spacing:0.6px;color:#6e6e73;">
+                      SUNAIN
+                    </div>
+                  </td>
+                </tr>
+    
+                <!-- Card -->
+                <tr>
+                  <td style="background:#ffffff;border:1px solid #e5e5ea;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,0.07);">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                      <tr>
+                        <td style="padding:30px 26px 26px 26px;font-family:Helvetica,Arial,sans-serif;">
+                          <div style="font-size:24px;line-height:1.25;font-weight:700;color:#1d1d1f;margin:0 0 10px 0;">
+                            Verify your email
+                          </div>
+    
+                          <div style="font-size:15px;line-height:1.65;color:#1d1d1f;margin:0 0 18px 0;">
+                            Welcome to Sunain. Confirming your email keeps your account secure and ensures you can receive important updates.
+                          </div>
+    
+                          <!-- Code -->
+                          <div style="text-align:center;margin:18px 0 10px 0;">
+                            <div style="display:inline-block;background:#f5f5f7;border:1px solid #e5e5ea;border-radius:16px;padding:16px 18px;">
+                              <span style="font-family:Helvetica,Arial,sans-serif;font-size:28px;letter-spacing:8px;font-weight:700;color:#111111;">
+                                ${String(code)}
+                              </span>
+                            </div>
+                          </div>
+    
+                          <div style="font-size:13px;line-height:1.55;color:#6e6e73;text-align:center;margin:0 0 22px 0;">
+                            This code expires soon for your security.
+                          </div>
+    
+                          <!-- Button -->
+                          <div style="text-align:center;margin:0 0 18px 0;">
+                            <!--[if mso]>
+                              <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="${verifyUrl}" style="height:44px;v-text-anchor:middle;width:210px;" arcsize="28%" stroke="f" fillcolor="#FF0558">
+                                <w:anchorlock/>
+                                <center style="color:#ffffff;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;">
+                                  Verify email
+                                </center>
+                              </v:roundrect>
+                            <![endif]-->
+                            <!--[if !mso]><!-- -->
+                              <a href="${verifyUrl}"
+                                style="display:inline-block;background:#FF0558;color:#ffffff;text-decoration:none;padding:14px 22px;border-radius:14px;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:1;">
+                                Verify email
+                              </a>
+                            <!--<![endif]-->
+                          </div>
+    
+                          <!-- Fallback link -->
+                          <div style="font-size:12px;line-height:1.6;color:#6e6e73;margin:0;">
+                            If the button doesn’t work, copy and paste this link into your browser:
+                            <br>
+                            <a href="${verifyUrl}" style="color:#007aff;text-decoration:none;word-break:break-all;">
+                              ${verifyUrl}
+                            </a>
+                          </div>
+    
+                          <hr style="border:none;border-top:1px solid #e5e5ea;margin:22px 0;">
+    
+                          <div style="font-size:12px;line-height:1.55;color:#8e8e93;margin:0;">
+                            If you didn’t request this, no action is required. You can safely ignore this email.
+                          </div>
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+    
+                <!-- Footer -->
+                <tr>
+                  <td align="center" style="padding:16px 8px 0 8px;">
+                    <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;line-height:1.5;color:#8e8e93;">
+                      © ${new Date().getFullYear()} Sunain. All rights reserved.
+                    </div>
+                  </td>
+                </tr>
+    
+              </table>
+            </td>
+          </tr>
+        </table>
       </div>
       `,
     };
@@ -579,12 +713,17 @@ export const changePhoneNumber: RequestHandler = async (
         .json({ success: false, message: "Please provide valid inputs" });
     }
 
-    if (!validatePhoneNumber(phone_number)) {
+    const { isValid, normalized } =
+      validateAndNormalizePhoneNumber(phone_number);
+
+    if (!isValid) {
       return res.status(400).json({
         success: false,
         message: "Phone number that you provided is not valid",
       });
     }
+
+    phone_number = normalized;
 
     const cookietoken = req.cookies.authToken;
     const { username }: { username: string } = jwt_decode(cookietoken);
@@ -698,12 +837,17 @@ export const verifyChangePhoneNumberCode: RequestHandler = async (
         .json({ success: false, message: "Please provide valid inputs" });
     }
 
-    if (!validatePhoneNumber(phone_number)) {
+    const { isValid, normalized } =
+      validateAndNormalizePhoneNumber(phone_number);
+
+    if (!isValid) {
       return res.status(400).json({
         success: false,
         message: "Phone number that you provided is not valid",
       });
     }
+
+    phone_number = normalized;
 
     const cookietoken = req.cookies.authToken;
     const { username }: { username: string } = jwt_decode(cookietoken);
@@ -982,12 +1126,17 @@ export const verifyPhoneNumberOnLogin: RequestHandler = async (
         .json({ success: false, message: "Please provide valid inputs" });
     }
 
-    if (!validatePhoneNumber(phone_number)) {
+    const { isValid, normalized } =
+      validateAndNormalizePhoneNumber(phone_number);
+
+    if (!isValid) {
       return res.status(400).json({
         success: false,
         message: "Phone number that you provided is not valid",
       });
     }
+
+    phone_number = normalized;
 
     let user = await prisma.user.findFirst({
       where: { phone_number: phone_number },
@@ -1055,6 +1204,127 @@ export const verifyPhoneNumberOnLogin: RequestHandler = async (
   }
 };
 
+export const resendVerificationCodeToPhoneNumber: RequestHandler = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    let { phone_number }: { phone_number: string } = req.body;
+
+    if (!phone_number.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid inputs" });
+    }
+
+    const { isValid, normalized } =
+      validateAndNormalizePhoneNumber(phone_number);
+
+    if (!isValid) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number that you provided is not valid",
+      });
+    }
+
+    phone_number = normalized;
+
+    const cookietoken = req.cookies.authToken;
+    const { username }: { username: string } = jwt_decode(cookietoken);
+
+    const user = await prisma.user.findUnique({
+      where: { username, phone_number: phone_number },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "You are not registered with this phone number",
+      });
+    }
+
+    if (user.verified) {
+      return res.status(400).json({
+        success: false,
+        message: "user is already verified",
+      });
+    }
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    if (
+      !user.sms_attempts_reset_at ||
+      new Date(user.sms_attempts_reset_at) < todayStart
+    ) {
+      await prisma.user.update({
+        where: { username },
+        data: {
+          sms_attempts_today: 0,
+          sms_attempts_reset_at: todayStart.toISOString(),
+        },
+      });
+    }
+
+    if (user.sms_attempts_today >= 5) {
+      return res.status(429).json({
+        success: false,
+        message:
+          "Too many verification attempts today. Please try again tomorrow.",
+      });
+    }
+
+    if (user.verification_token_expiry) {
+      const now = new Date();
+      const expiry = new Date(user.verification_token_expiry);
+
+      if (now < expiry) {
+        const remainingSeconds = Math.ceil(
+          (expiry.getTime() - now.getTime()) / 1000
+        );
+
+        return res.status(400).json({
+          success: false,
+          message: `A verification code is already sent. Try again after ${remainingSeconds} seconds.`,
+        });
+      }
+    }
+
+    const { verificationToken, token, code } = generateVerificationCode();
+
+    const currentDate = new Date();
+    const next2Minutes = new Date(currentDate.getTime() + 2 * 60 * 1000);
+
+    await twilio_client.messages.create({
+      body: `Your Sunain code is ${code}`,
+      from: process.env.TWILIO_ACCOUNT_PHONE_NUMBER,
+      to: phone_number,
+    });
+
+    await prisma.user.update({
+      where: { username },
+      data: {
+        verification_secret: token,
+        verification_token: verificationToken,
+        verification_token_expiry: next2Minutes.toISOString(),
+        sms_attempts_today: user.sms_attempts_today + 1,
+      },
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Message resent successfully" });
+  } catch (err) {
+    logger.error(`Error in re-sending the verification code: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
 export const sendVerificationCodeToPhoneNumber: RequestHandler = async (
   req,
   res,
@@ -1069,17 +1339,33 @@ export const sendVerificationCodeToPhoneNumber: RequestHandler = async (
         .json({ success: false, message: "Please provide valid inputs" });
     }
 
-    if (!validatePhoneNumber(phone_number)) {
+    const { isValid, normalized } =
+      validateAndNormalizePhoneNumber(phone_number);
+
+    if (!isValid) {
       return res.status(400).json({
         success: false,
         message: "Phone number that you provided is not valid",
       });
     }
 
+    phone_number = normalized;
+
     const cookietoken = req.cookies.authToken;
     const { username }: { username: string } = jwt_decode(cookietoken);
 
-    const user = await prisma.user.findFirst({ where: { username } });
+    const checkUser = await prisma.user.findUnique({ where: { phone_number } });
+
+    if (checkUser) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number is already associated with another account",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { username },
+    });
 
     if (user.verified) {
       return res.status(400).json({
