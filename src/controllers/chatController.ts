@@ -1255,6 +1255,7 @@ export const chatController = async (
             tempChunksBaseDir,
             meetingName
           );
+
           const tempChunksParticipantDir = path.join(
             tempChunksMeetingDir,
             `recording-${streamInfo.recordingNumber}`,
