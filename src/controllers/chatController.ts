@@ -980,10 +980,8 @@ export const chatController = async (
     }, 10000);
   };
 
-  // Start the worker
   startWaitingTimeoutWorker();
 
-  // ✅ DEFINE FUNCTION HERE (inside chatController but outside io.on)
   const getChunkTimestamps = async (
     meetingName: string,
     userName: string,
@@ -998,7 +996,6 @@ export const chatController = async (
     return items.map((item) => JSON.parse(item));
   };
 
-  // ✅ Store first chunk headers per participant
   const firstChunkHeaders = new Map<string, Buffer>();
 
   io.on("connection", (socket: Socket): void => {
@@ -1089,7 +1086,7 @@ export const chatController = async (
         recordingStartTime: number;
       }) => {
         try {
-          const { meetingName, userName, recordingStartTime } = data;
+          const { meetingName, userName } = data;
 
           const session = await prisma.recordingSession.findFirst({
             where: { meetingName, isRecording: true },
@@ -1127,9 +1124,28 @@ export const chatController = async (
           const participantNumber =
             meeting.participants.indexOf(participant) + 1;
 
-          // ✅ USE SERVER TIME AS SOURCE OF TRUTH
-          // const serverStartTime = Date.now();
-          const serverStartTime = recordingStartTime;
+          const recordingStartKey = `recording-start:${meetingName}:${recordingNumber}`;
+          let serverStartTime: number;
+
+          const existingStartTime = await redis.get(recordingStartKey);
+
+          if (existingStartTime) {
+            serverStartTime = parseInt(existingStartTime, 10);
+            console.log(
+              `📍 Using shared start time for ${userName}: ${serverStartTime}`
+            );
+          } else {
+            serverStartTime = Date.now();
+            await redis.set(
+              recordingStartKey,
+              serverStartTime.toString(),
+              "EX",
+              7200
+            );
+            console.log(
+              `📍 Set shared start time by ${userName}: ${serverStartTime}`
+            );
+          }
 
           const filepath = path.join(
             meetingDir,
@@ -1138,22 +1154,13 @@ export const chatController = async (
 
           const streamInfo: AudioStreamInfo = {
             filepath,
-            startedAt: serverStartTime, // Keep for backward compatibility
-            serverStartTime, // ✅ NEW: Explicit server start time
+            startedAt: serverStartTime,
+            serverStartTime,
             participantNumber,
             recordingNumber,
           };
 
           await setAudioStreamInfo(meetingName, userName, streamInfo);
-
-          // ✅ STORE RECORDING START TIME IN REDIS FOR ALIGNMENT
-          const recordingStartKey = `recording-start:${meetingName}:${recordingNumber}`;
-          await redis.set(
-            recordingStartKey,
-            serverStartTime.toString(),
-            "EX",
-            7200
-          );
 
           console.log(
             `✅ Audio stream started: ${userName} (P${participantNumber}) at ${serverStartTime}`
@@ -1162,7 +1169,7 @@ export const chatController = async (
           socket.emit("audio-stream-ready", {
             filepath,
             recordingNumber,
-            serverStartTime, // Send to client for reference
+            serverStartTime,
           });
         } catch (error) {
           console.error("❌ Error starting audio stream:", error);
