@@ -48,9 +48,6 @@ interface ChunkTimestamp {
   estimatedDuration?: number; // ✅ NEW: Duration of this chunk in ms
 }
 
-// Timing gap analysis between two participants
-// Update the TimingGap interface
-// Update the TimingGap interface first
 interface TimingGap {
   chunkNumber: number;
   participant1Time: number | null;
@@ -94,7 +91,6 @@ export const localRecordingQueue = new Queue("local-recordings", {
   },
 });
 
-// Updated analyzeTimingGaps function
 const analyzeTimingGaps = (
   participant1Chunks: ChunkTimestamp[],
   participant2Chunks: ChunkTimestamp[]
@@ -110,7 +106,6 @@ const analyzeTimingGaps = (
     const p2 = participant2Chunks[i];
 
     if (p1 && p2) {
-      // ✅ USE SERVER RELATIVE TIME INSTEAD OF CLIENT TIME
       const timeDiff = p1.serverRelativeTime - p2.serverRelativeTime;
 
       gaps.push({
@@ -122,8 +117,8 @@ const analyzeTimingGaps = (
         participant2Size: p2.size,
         participant1Latency: p1.serverReceiveTime - (p1.clientTimestamp || 0),
         participant2Latency: p2.serverReceiveTime - (p2.clientTimestamp || 0),
-        participant1Duration: p1.estimatedDuration, // ✅ ADD ACTUAL DURATION
-        participant2Duration: p2.estimatedDuration, // ✅ ADD ACTUAL DURATION
+        participant1Duration: p1.estimatedDuration,
+        participant2Duration: p2.estimatedDuration,
       });
     } else if (p1 && !p2) {
       gaps.push({
@@ -132,7 +127,7 @@ const analyzeTimingGaps = (
         participant2Time: null,
         difference: null,
         participant1Size: p1.size,
-        participant1Duration: p1.estimatedDuration, // ✅ ADD THIS
+        participant1Duration: p1.estimatedDuration,
         missingParticipant: 2 as 1 | 2,
       });
     } else if (!p1 && p2) {
@@ -142,7 +137,7 @@ const analyzeTimingGaps = (
         participant2Time: p2.serverRelativeTime,
         difference: null,
         participant2Size: p2.size,
-        participant2Duration: p2.estimatedDuration, // ✅ ADD THIS
+        participant2Duration: p2.estimatedDuration,
         missingParticipant: 1 as 1 | 2,
       });
     }
