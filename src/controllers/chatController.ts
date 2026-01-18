@@ -10,6 +10,8 @@ import path from "path";
 import Queue from "bull";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { transcriptQueue } from "./zoomSDKAuthEndpoint";
+import ffmpeg from "fluent-ffmpeg";
+import { promisify } from "util";
 
 dotenv.config();
 
@@ -48,6 +50,7 @@ interface ChunkTimestamp {
 
 // Timing gap analysis between two participants
 // Update the TimingGap interface
+// Update the TimingGap interface first
 interface TimingGap {
   chunkNumber: number;
   participant1Time: number | null;
@@ -55,8 +58,10 @@ interface TimingGap {
   difference: number | null;
   participant1Size?: number;
   participant2Size?: number;
-  participant1Latency?: number; // ✅ ADD THIS
-  participant2Latency?: number; // ✅ ADD THIS
+  participant1Latency?: number;
+  participant2Latency?: number;
+  participant1Duration?: number; // ✅ ADD THIS
+  participant2Duration?: number; // ✅ ADD THIS
   missingParticipant?: 1 | 2;
 }
 
@@ -89,6 +94,7 @@ export const localRecordingQueue = new Queue("local-recordings", {
   },
 });
 
+// Updated analyzeTimingGaps function
 const analyzeTimingGaps = (
   participant1Chunks: ChunkTimestamp[],
   participant2Chunks: ChunkTimestamp[]
@@ -116,6 +122,8 @@ const analyzeTimingGaps = (
         participant2Size: p2.size,
         participant1Latency: p1.serverReceiveTime - (p1.clientTimestamp || 0),
         participant2Latency: p2.serverReceiveTime - (p2.clientTimestamp || 0),
+        participant1Duration: p1.estimatedDuration, // ✅ ADD ACTUAL DURATION
+        participant2Duration: p2.estimatedDuration, // ✅ ADD ACTUAL DURATION
       });
     } else if (p1 && !p2) {
       gaps.push({
@@ -123,7 +131,9 @@ const analyzeTimingGaps = (
         participant1Time: p1.serverRelativeTime,
         participant2Time: null,
         difference: null,
-        missingParticipant: 2 as 1 | 2, // ✅ TYPE ASSERTION
+        participant1Size: p1.size,
+        participant1Duration: p1.estimatedDuration, // ✅ ADD THIS
+        missingParticipant: 2 as 1 | 2,
       });
     } else if (!p1 && p2) {
       gaps.push({
@@ -131,7 +141,9 @@ const analyzeTimingGaps = (
         participant1Time: null,
         participant2Time: p2.serverRelativeTime,
         difference: null,
-        missingParticipant: 1 as 1 | 2, // ✅ TYPE ASSERTION
+        participant2Size: p2.size,
+        participant2Duration: p2.estimatedDuration, // ✅ ADD THIS
+        missingParticipant: 1 as 1 | 2,
       });
     }
   }
@@ -787,6 +799,19 @@ export const chatController = async (
     }
   };
 
+  // Add this helper function at the top level
+  const getAudioDuration = (filePath: string): Promise<number> => {
+    return new Promise((resolve, reject) => {
+      ffmpeg.ffprobe(filePath, (err, metadata) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(metadata.format.duration || 0);
+        }
+      });
+    });
+  };
+
   // Store disconnection events
   const logDisconnection = async (
     meetingName: string,
@@ -1178,32 +1203,29 @@ export const chatController = async (
           const serverRelativeTime =
             serverReceiveTime - streamInfo.serverStartTime;
 
-          // ✅ CALCULATE DURATION FROM PREVIOUS CHUNK
-          const timestampKey = REDIS_KEYS.chunkTimestamps(
-            meetingName,
-            userName,
-            streamInfo.recordingNumber
-          );
+          // ✅ GET ACTUAL DURATION FROM FFPROBE
+          let actualDuration = 0;
 
-          // Get the previous chunk to calculate duration
-          const previousChunks = await redis.lrange(timestampKey, -1, -1); // Get last chunk
-          let estimatedDuration = 0;
+          try {
+            // Flush the stream to ensure chunk is written
+            await new Promise<void>((resolve) => {
+              stream.once("drain", () => resolve());
+              if (!stream.write("")) resolve(); // If buffer not full, resolve immediately
+            });
 
-          if (previousChunks.length > 0 && chunkNumber > 1) {
-            const prevChunk: ChunkTimestamp = JSON.parse(previousChunks[0]);
-
-            // Duration = current timestamp - previous timestamp
-            estimatedDuration =
-              serverRelativeTime - prevChunk.serverRelativeTime;
+            // Get actual audio duration from the file so far
+            actualDuration = await getAudioDuration(streamInfo.filepath);
+            actualDuration = Math.round(actualDuration * 1000); // Convert to ms
 
             console.log(
-              `📊 Chunk ${chunkNumber} duration: ${estimatedDuration}ms (from chunk ${
-                chunkNumber - 1
-              })`
+              `🎵 Chunk ${chunkNumber}: ffprobe duration = ${actualDuration}ms`
             );
-          } else {
-            // First chunk - use default estimate or time since start
-            estimatedDuration = serverRelativeTime;
+          } catch (probeError) {
+            console.warn(
+              `⚠️ Could not probe audio duration: ${probeError.message}`
+            );
+            // Fallback to timestamp-based estimation
+            actualDuration = serverRelativeTime;
           }
 
           const chunkInfo: ChunkTimestamp = {
@@ -1212,15 +1234,21 @@ export const chatController = async (
             serverReceiveTime,
             serverRelativeTime,
             size: chunk.byteLength,
-            estimatedDuration, // ✅ ADD DURATION
+            estimatedDuration: actualDuration, // ✅ NOW CONTAINS ACTUAL DURATION FROM FFPROBE
           };
+
+          const timestampKey = REDIS_KEYS.chunkTimestamps(
+            meetingName,
+            userName,
+            streamInfo.recordingNumber
+          );
 
           await redis.rpush(timestampKey, JSON.stringify(chunkInfo));
           await redis.expire(timestampKey, 172800);
 
           if (chunkNumber % 100 === 0) {
             console.log(
-              `📊 ${userName} chunk ${chunkNumber} @ ${serverRelativeTime}ms (duration: ${estimatedDuration}ms, ${chunk.byteLength} bytes)`
+              `📊 ${userName} chunk ${chunkNumber} @ ${serverRelativeTime}ms (actual duration: ${actualDuration}ms, ${chunk.byteLength} bytes)`
             );
           }
         } catch (error) {
