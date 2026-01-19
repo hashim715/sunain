@@ -1242,25 +1242,22 @@ export const chatController = async (
           const serverRelativeTime =
             serverReceiveTime - streamInfo.serverStartTime;
 
-          // ✅ GET PREVIOUS CHUNKS TO CALCULATE CUMULATIVE VALUES
-          const previousChunks = await getChunkTimestamps(
-            meetingName,
-            userName,
-            streamInfo.recordingNumber
-          );
-
-          const previousCumulativeBytes =
-            previousChunks.length > 0
-              ? previousChunks[previousChunks.length - 1].cumulativeBytes || 0
-              : 0;
-
-          const previousCumulativeDuration =
-            previousChunks.length > 0
-              ? previousChunks[previousChunks.length - 1]
-                  .cumulativeDurationMs || 0
-              : 0;
-
           const chunkDuration = 40000; // 40 seconds per chunk (from MediaRecorder.start(40000))
+
+          // ✅ ATOMIC INCREMENT - No need to read all previous chunks
+          const cumulativeKey = `cumulative:${meetingName}:${userName}:${streamInfo.recordingNumber}`;
+
+          const results = await redis
+            .multi()
+            .incrby(`${cumulativeKey}:bytes`, audioBuffer.byteLength)
+            .incrby(`${cumulativeKey}:duration`, chunkDuration)
+            .expire(`${cumulativeKey}:bytes`, 172800)
+            .expire(`${cumulativeKey}:duration`, 172800)
+            .exec();
+
+          // Extract values from multi response
+          const newCumulativeBytes = parseInt(results![0][1] as string);
+          const newCumulativeDuration = parseInt(results![1][1] as string);
 
           const chunkInfo: ChunkTimestamp = {
             chunkNumber,
@@ -1269,8 +1266,8 @@ export const chatController = async (
             serverRelativeTime,
             size: audioBuffer.byteLength,
             estimatedDuration: chunkDuration,
-            cumulativeBytes: previousCumulativeBytes + audioBuffer.byteLength,
-            cumulativeDurationMs: previousCumulativeDuration + chunkDuration,
+            cumulativeBytes: newCumulativeBytes,
+            cumulativeDurationMs: newCumulativeDuration,
           };
 
           const timestampKey = REDIS_KEYS.chunkTimestamps(
@@ -1358,6 +1355,11 @@ export const chatController = async (
             userName,
             recordingNumber
           );
+
+          // ✅ ADD: Cleanup cumulative counters
+          const cumulativeKey = `cumulative:${meetingName}:${userName}:${recordingNumber}`;
+          await redis.del(`${cumulativeKey}:bytes`);
+          await redis.del(`${cumulativeKey}:duration`);
 
           let fileExists = false;
           let attempts = 0;
