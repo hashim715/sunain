@@ -1203,7 +1203,6 @@ export const chatController = async (
             return;
           }
 
-          // ✅ CONVERT TO PROPER BUFFER
           let audioBuffer: Buffer;
 
           if (Buffer.isBuffer(chunk)) {
@@ -1230,107 +1229,9 @@ export const chatController = async (
             stream.write(audioBuffer);
           }
 
-          // const serverReceiveTime = Date.now();
           const serverReceiveTime = timestamp;
           const serverRelativeTime =
             serverReceiveTime - streamInfo.serverStartTime;
-
-          const participantKey = `${meetingName}:${userName}:${streamInfo.recordingNumber}`;
-
-          // ✅ EXTRACT HEADERS FROM FIRST CHUNK
-          if (chunkNumber === 1) {
-            // Extract WebM headers (EBML + Segment info)
-            // WebM headers typically end before the first Cluster element (0x1F43B675)
-            const clusterMarker = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
-            const clusterIndex = audioBuffer.indexOf(clusterMarker);
-
-            if (clusterIndex > 0) {
-              const headers = audioBuffer.slice(0, clusterIndex);
-              firstChunkHeaders.set(participantKey, headers);
-              console.log(
-                `📋 Extracted ${headers.length} bytes of headers for ${userName}`
-              );
-            } else {
-              console.warn(
-                `⚠️ Could not find cluster marker in chunk 1 for ${userName}`
-              );
-            }
-          }
-
-          // ✅ CREATE TEMP CHUNKS DIRECTORY STRUCTURE
-          const tempChunksBaseDir = path.join(__dirname, "..", "temp-chunks");
-          const tempChunksMeetingDir = path.join(
-            tempChunksBaseDir,
-            meetingName
-          );
-
-          const tempChunksParticipantDir = path.join(
-            tempChunksMeetingDir,
-            `recording-${streamInfo.recordingNumber}`,
-            `participant-${streamInfo.participantNumber}-${userName}`
-          );
-
-          if (!fs.existsSync(tempChunksParticipantDir)) {
-            fs.mkdirSync(tempChunksParticipantDir, { recursive: true });
-          }
-
-          let chunkDuration = 5000; // Fallback
-
-          try {
-            const tempChunkPath = path.join(
-              tempChunksParticipantDir,
-              `chunk-${String(chunkNumber).padStart(5, "0")}.webm`
-            );
-
-            let completeChunk: Buffer;
-
-            if (chunkNumber === 1) {
-              // First chunk already has headers
-              completeChunk = audioBuffer;
-            } else {
-              // ✅ PREPEND HEADERS TO SUBSEQUENT CHUNKS
-              const headers = firstChunkHeaders.get(participantKey);
-
-              if (headers) {
-                // Extract just the cluster data from this chunk
-                const clusterMarker = Buffer.from([0x1f, 0x43, 0xb6, 0x75]);
-                const clusterIndex = audioBuffer.indexOf(clusterMarker);
-
-                const clusterData =
-                  clusterIndex >= 0
-                    ? audioBuffer.slice(clusterIndex)
-                    : audioBuffer;
-
-                // Combine headers + cluster data
-                completeChunk = Buffer.concat([headers, clusterData]);
-
-                console.log(
-                  `🔧 Reconstructed chunk ${chunkNumber}: ${headers.length} + ${clusterData.length} = ${completeChunk.length} bytes`
-                );
-              } else {
-                console.warn(
-                  `⚠️ No headers available for ${userName}, using raw chunk`
-                );
-                completeChunk = audioBuffer;
-              }
-            }
-
-            // Write the complete chunk
-            fs.writeFileSync(tempChunkPath, completeChunk);
-
-            // ✅ NOW PROBE THE RECONSTRUCTED CHUNK
-            const duration = await getAudioDuration(tempChunkPath);
-            chunkDuration = Math.round(duration * 1000);
-
-            console.log(
-              `🎵 Chunk ${chunkNumber}: exact duration = ${chunkDuration}ms (file: ${tempChunkPath})`
-            );
-          } catch (probeError: any) {
-            console.warn(
-              `⚠️ Could not probe chunk ${chunkNumber}: ${probeError.message}`
-            );
-            chunkDuration = 5000;
-          }
 
           const chunkInfo: ChunkTimestamp = {
             chunkNumber,
@@ -1338,7 +1239,7 @@ export const chatController = async (
             serverReceiveTime,
             serverRelativeTime,
             size: audioBuffer.byteLength,
-            estimatedDuration: chunkDuration, // ✅ EXACT DURATION
+            estimatedDuration: 40000,
           };
 
           const timestampKey = REDIS_KEYS.chunkTimestamps(
@@ -1352,7 +1253,7 @@ export const chatController = async (
 
           if (chunkNumber % 10 === 0) {
             console.log(
-              `📊 ${userName} chunk ${chunkNumber} @ ${serverRelativeTime}ms (duration: ${chunkDuration}ms, ${audioBuffer.byteLength} bytes)`
+              `📊 ${userName} chunk ${chunkNumber} @ ${serverRelativeTime}ms (${audioBuffer.byteLength} bytes)`
             );
           }
         } catch (error: any) {
