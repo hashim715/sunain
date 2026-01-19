@@ -62,7 +62,6 @@ interface TimingGap {
   missingParticipant?: 1 | 2;
 }
 
-// Update the RecordingMetadata interface
 interface RecordingMetadata {
   meetingName: string;
   recordingNumber: number;
@@ -74,9 +73,7 @@ interface RecordingMetadata {
   disconnectionPeriods?: Array<{
     disconnectTime: number;
     reconnectTime: number | null;
-    serverStartTime: number;
-    disconnectPositionSec: number;
-    gapDurationSec: number | null; // null if never reconnected
+    duration: number | null;
   }>;
   chunkTimestamps?: ChunkTimestamp[];
 }
@@ -797,6 +794,7 @@ export const chatController = async (
     }
   };
 
+  // Add this helper function at the top level
   const getAudioDuration = (filePath: string): Promise<number> => {
     return new Promise((resolve, reject) => {
       ffmpeg.ffprobe(filePath, (err, metadata) => {
@@ -809,27 +807,16 @@ export const chatController = async (
     });
   };
 
+  // Store disconnection events
   const logDisconnection = async (
     meetingName: string,
     userName: string,
     recordingNumber: number,
-    disconnectTime: number,
-    serverStartTime: number
+    disconnectTime: number
   ): Promise<void> => {
-    const disconnectPositionSec = (disconnectTime - serverStartTime) / 1000;
-
-    const log: {
-      disconnectTime: number;
-      reconnectTime: number | null;
-      serverStartTime: number;
-      disconnectPositionSec: number;
-      gapDurationSec: number | null;
-    } = {
+    const log: {} = {
       disconnectTime,
-      reconnectTime: null,
-      serverStartTime,
-      disconnectPositionSec,
-      gapDurationSec: null,
+      reconnectTime: null, // Will be filled on reconnect
     };
 
     const key = REDIS_KEYS.disconnectionLog(
@@ -838,16 +825,18 @@ export const chatController = async (
       recordingNumber
     );
 
+    // Append to list
     await redis.rpush(key, JSON.stringify(log));
-    await redis.expire(key, 172800);
+    await redis.expire(key, 172800); // 48 hours
 
     console.log(
-      `📝 Logged disconnection for ${userName} at position ${disconnectPositionSec.toFixed(
-        2
-      )}s`
+      `📝 Logged disconnection for ${userName} at ${new Date(
+        disconnectTime
+      ).toISOString()}`
     );
   };
 
+  // Update reconnection time
   const logReconnection = async (
     meetingName: string,
     userName: string,
@@ -860,36 +849,43 @@ export const chatController = async (
       recordingNumber
     );
 
+    // Get all disconnect logs
     const logs = await redis.lrange(key, 0, -1);
+
     if (logs.length === 0) return;
 
+    // Find the last log without reconnect time
     for (let i = logs.length - 1; i >= 0; i--) {
       const log = JSON.parse(logs[i]);
 
       if (log.reconnectTime === null) {
+        // Update this log
         log.reconnectTime = reconnectTime;
 
-        log.gapDurationSec = (reconnectTime - log.disconnectTime) / 1000;
-
+        // Replace in Redis (delete and re-insert all)
         await redis.del(key);
+
         const updatedLogs = logs.map((item, idx) =>
           idx === i ? JSON.stringify(log) : item
         );
+
         for (const item of updatedLogs) {
           await redis.rpush(key, item);
         }
         await redis.expire(key, 172800);
 
+        const pauseDuration = reconnectTime - log.disconnectTime;
         console.log(
-          `📝 Logged reconnection for ${userName} (gap: ${log.gapDurationSec.toFixed(
-            2
-          )}s)`
+          `📝 Logged reconnection for ${userName} at ${new Date(
+            reconnectTime
+          ).toISOString()} (paused ${pauseDuration}ms)`
         );
         break;
       }
     }
   };
 
+  // Get all disconnection periods for a participant
   const getDisconnectionLog = async (
     meetingName: string,
     userName: string,
@@ -898,9 +894,7 @@ export const chatController = async (
     Array<{
       disconnectTime: number;
       reconnectTime: number | null;
-      serverStartTime: number;
-      disconnectPositionSec: number;
-      gapDurationSec: number | null;
+      duration: number;
     }>
   > => {
     const key = REDIS_KEYS.disconnectionLog(
@@ -915,13 +909,14 @@ export const chatController = async (
       return {
         disconnectTime: log.disconnectTime,
         reconnectTime: log.reconnectTime,
-        serverStartTime: log.serverStartTime,
-        disconnectPositionSec: log.disconnectPositionSec,
-        gapDurationSec: log.gapDurationSec || null,
+        duration: log.reconnectTime
+          ? log.reconnectTime - log.disconnectTime
+          : null,
       };
     });
   };
 
+  // ✅ Worker to check for timed-out waiting sessions
   const startWaitingTimeoutWorker = () => {
     setInterval(async () => {
       try {
@@ -935,6 +930,7 @@ export const chatController = async (
           const startTime = parseInt(startTimeStr);
           const elapsed = Date.now() - startTime;
 
+          // ✅ 2 MINUTE TIMEOUT
           if (elapsed >= 120000) {
             const parts = key.split(":");
             const meetingName = parts[1];
@@ -944,6 +940,7 @@ export const chatController = async (
               `⏰ Waiting timeout expired for ${meetingName} recording ${recordingNumber}`
             );
 
+            // ✅ MARK SESSION AS FAILED
             const session = await prisma.recordingSession.findFirst({
               where: { meetingName, recordingNumber },
             });
@@ -962,6 +959,7 @@ export const chatController = async (
                 },
               });
 
+              // Clean up Redis
               await deleteSessionRecordings(meetingName, recordingNumber);
               await redis.del(key);
 
@@ -1225,23 +1223,26 @@ export const chatController = async (
             return;
           }
 
+          // Write raw chunk directly to stream file (no reconstruction)
           const stream = getOrCreateWriteStream(socket.id, streamInfo.filepath);
 
           if (stream.writable) {
             stream.write(audioBuffer);
           }
 
+          // Calculate timing metadata
           const serverReceiveTime = timestamp;
           const serverRelativeTime =
             serverReceiveTime - streamInfo.serverStartTime;
 
+          // Store timing info with nominal duration (from MediaRecorder.start interval)
           const chunkInfo: ChunkTimestamp = {
             chunkNumber,
             clientTimestamp: timestamp,
             serverReceiveTime,
             serverRelativeTime,
             size: audioBuffer.byteLength,
-            estimatedDuration: 40000,
+            estimatedDuration: 40000, // Nominal duration from MediaRecorder.start(40000)
           };
 
           const timestampKey = REDIS_KEYS.chunkTimestamps(
@@ -2017,18 +2018,21 @@ export const chatController = async (
       }
     });
 
-    // 4. UPDATE socket.on("disconnect") HANDLER
     socket.on("disconnect", async (reason) => {
       console.log(`🔌 Socket disconnected: ${socket.id}, reason: ${reason}`);
 
       try {
         const userInfo = await getUserSessionBySocketId(socket.id);
-        if (!userInfo) return;
+
+        if (!userInfo) {
+          return;
+        }
 
         const { session, meetingName } = userInfo;
         const { userName } = session;
 
         const currentSession = await getUserSession(meetingName, userName);
+
         if (!currentSession || currentSession.socketId !== socket.id) {
           console.log(`⚠️ Socket ${socket.id} is not current for ${userName}`);
           return;
@@ -2036,29 +2040,24 @@ export const chatController = async (
 
         const disconnectTime = Date.now();
 
+        // ✅ CHECK IF RECORDING IS ACTIVE
         const activeRecording = await prisma.recordingSession.findFirst({
           where: { meetingName, isRecording: true },
         });
 
         if (activeRecording) {
-          // ✅ GET SERVER START TIME FROM REDIS
-          const recordingStartKey = `recording-start:${meetingName}:${activeRecording.recordingNumber}`;
-          const serverStartTimeStr = await redis.get(recordingStartKey);
-
-          if (serverStartTimeStr) {
-            const serverStartTime = parseInt(serverStartTimeStr, 10);
-
-            await logDisconnection(
-              meetingName,
-              userName,
-              activeRecording.recordingNumber,
-              disconnectTime,
-              serverStartTime
-            );
-          }
+          // ✅ LOG DISCONNECTION WITH RECORDING NUMBER
+          await logDisconnection(
+            meetingName,
+            userName,
+            activeRecording.recordingNumber,
+            disconnectTime
+          );
         }
 
+        // ✅ CLOSE STREAM IMMEDIATELY (prevent corrupted file)
         await closeWriteStream(socket.id);
+
         await markPendingDisconnect(meetingName, userName, socket.id);
         console.log(`⏱️ Marked ${userName} as pending disconnect`);
 
