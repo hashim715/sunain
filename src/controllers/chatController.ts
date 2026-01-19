@@ -78,6 +78,16 @@ interface RecordingMetadata {
   chunkTimestamps?: ChunkTimestamp[];
 }
 
+// Define the interface
+interface DisconnectionLog {
+  disconnectTime: number;
+  reconnectTime: number | null;
+  audioPositionMs: number;
+  lastChunkNumber: number;
+  reconnectAudioPositionMs?: number;
+  gapDurationMs?: number;
+}
+
 export const localRecordingQueue = new Queue("local-recordings", {
   redis: {
     host: process.env.REDIS_HOST || "localhost",
@@ -794,7 +804,6 @@ export const chatController = async (
     }
   };
 
-  // Add this helper function at the top level
   const getAudioDuration = (filePath: string): Promise<number> => {
     return new Promise((resolve, reject) => {
       ffmpeg.ffprobe(filePath, (err, metadata) => {
@@ -807,16 +816,36 @@ export const chatController = async (
     });
   };
 
-  // Store disconnection events
   const logDisconnection = async (
     meetingName: string,
     userName: string,
     recordingNumber: number,
     disconnectTime: number
   ): Promise<void> => {
-    const log: {} = {
+    const streamInfo = await getAudioStreamInfo(meetingName, userName);
+    const chunks = await getChunkTimestamps(
+      meetingName,
+      userName,
+      recordingNumber
+    );
+
+    let audioPositionMs: number;
+
+    if (chunks.length > 0) {
+      const lastChunk = chunks[chunks.length - 1];
+      audioPositionMs =
+        lastChunk.serverRelativeTime + (lastChunk.estimatedDuration || 40000);
+    } else if (streamInfo) {
+      audioPositionMs = disconnectTime - streamInfo.serverStartTime;
+    } else {
+      audioPositionMs = 0;
+    }
+
+    const log: DisconnectionLog = {
       disconnectTime,
-      reconnectTime: null, // Will be filled on reconnect
+      reconnectTime: null,
+      audioPositionMs,
+      lastChunkNumber: chunks.length,
     };
 
     const key = REDIS_KEYS.disconnectionLog(
@@ -824,19 +853,14 @@ export const chatController = async (
       userName,
       recordingNumber
     );
-
-    // Append to list
     await redis.rpush(key, JSON.stringify(log));
-    await redis.expire(key, 172800); // 48 hours
+    await redis.expire(key, 172800);
 
     console.log(
-      `📝 Logged disconnection for ${userName} at ${new Date(
-        disconnectTime
-      ).toISOString()}`
+      `📝 Logged disconnection for ${userName} at audio position ${audioPositionMs}ms (chunk ${chunks.length})`
     );
   };
 
-  // Update reconnection time
   const logReconnection = async (
     meetingName: string,
     userName: string,
@@ -848,44 +872,44 @@ export const chatController = async (
       userName,
       recordingNumber
     );
-
-    // Get all disconnect logs
     const logs = await redis.lrange(key, 0, -1);
 
     if (logs.length === 0) return;
 
-    // Find the last log without reconnect time
+    const chunks = await getChunkTimestamps(
+      meetingName,
+      userName,
+      recordingNumber
+    );
+
     for (let i = logs.length - 1; i >= 0; i--) {
-      const log = JSON.parse(logs[i]);
+      const log: DisconnectionLog = JSON.parse(logs[i]);
 
       if (log.reconnectTime === null) {
-        // Update this log
         log.reconnectTime = reconnectTime;
+        log.reconnectAudioPositionMs =
+          chunks.length > 0
+            ? chunks[chunks.length - 1].serverRelativeTime + 40000
+            : log.audioPositionMs;
+        log.gapDurationMs = reconnectTime - log.disconnectTime;
 
-        // Replace in Redis (delete and re-insert all)
         await redis.del(key);
-
         const updatedLogs = logs.map((item, idx) =>
           idx === i ? JSON.stringify(log) : item
         );
-
         for (const item of updatedLogs) {
           await redis.rpush(key, item);
         }
         await redis.expire(key, 172800);
 
-        const pauseDuration = reconnectTime - log.disconnectTime;
         console.log(
-          `📝 Logged reconnection for ${userName} at ${new Date(
-            reconnectTime
-          ).toISOString()} (paused ${pauseDuration}ms)`
+          `📝 Reconnection: gap of ${log.gapDurationMs}ms at audio position ${log.audioPositionMs}ms`
         );
         break;
       }
     }
   };
 
-  // Get all disconnection periods for a participant
   const getDisconnectionLog = async (
     meetingName: string,
     userName: string,
@@ -916,7 +940,6 @@ export const chatController = async (
     });
   };
 
-  // ✅ Worker to check for timed-out waiting sessions
   const startWaitingTimeoutWorker = () => {
     setInterval(async () => {
       try {
