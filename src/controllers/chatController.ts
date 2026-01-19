@@ -70,15 +70,10 @@ interface RecordingMetadata {
   participantNumber: number;
   startTime: Date;
   endTime: Date;
-  disconnectionPeriods?: Array<{
-    disconnectTime: number;
-    reconnectTime: number | null;
-    duration: number | null;
-  }>;
   chunkTimestamps?: ChunkTimestamp[];
+  disconnectionPeriods?: DisconnectionLog[];
 }
 
-// Define the interface
 interface DisconnectionLog {
   disconnectTime: number;
   reconnectTime: number | null;
@@ -910,17 +905,12 @@ export const chatController = async (
     }
   };
 
+  // Update the return type
   const getDisconnectionLog = async (
     meetingName: string,
     userName: string,
     recordingNumber: number
-  ): Promise<
-    Array<{
-      disconnectTime: number;
-      reconnectTime: number | null;
-      duration: number;
-    }>
-  > => {
+  ): Promise<DisconnectionLog[]> => {
     const key = REDIS_KEYS.disconnectionLog(
       meetingName,
       userName,
@@ -929,13 +919,13 @@ export const chatController = async (
     const logs = await redis.lrange(key, 0, -1);
 
     return logs.map((item) => {
-      const log = JSON.parse(item);
+      const log: DisconnectionLog = JSON.parse(item);
       return {
         disconnectTime: log.disconnectTime,
         reconnectTime: log.reconnectTime,
-        duration: log.reconnectTime
-          ? log.reconnectTime - log.disconnectTime
-          : null,
+        audioPositionMs: log.audioPositionMs,
+        lastChunkNumber: log.lastChunkNumber,
+        gapDurationMs: log.gapDurationMs,
       };
     });
   };
