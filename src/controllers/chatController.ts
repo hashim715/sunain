@@ -905,7 +905,6 @@ export const chatController = async (
     }
   };
 
-  // Update the return type
   const getDisconnectionLog = async (
     meetingName: string,
     userName: string,
@@ -920,13 +919,7 @@ export const chatController = async (
 
     return logs.map((item) => {
       const log: DisconnectionLog = JSON.parse(item);
-      return {
-        disconnectTime: log.disconnectTime,
-        reconnectTime: log.reconnectTime,
-        audioPositionMs: log.audioPositionMs,
-        lastChunkNumber: log.lastChunkNumber,
-        gapDurationMs: log.gapDurationMs,
-      };
+      return log;
     });
   };
 
