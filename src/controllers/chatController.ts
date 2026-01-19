@@ -36,16 +36,16 @@ interface AudioStreamInfo {
   startedAt: number;
   participantNumber: number;
   recordingNumber: number;
-  serverStartTime: number; // ✅ NEW: Absolute server time when stream started
+  serverStartTime: number;
 }
 
 interface ChunkTimestamp {
   chunkNumber: number;
-  clientTimestamp: number; // Keep for debugging
-  serverReceiveTime: number; // ✅ Absolute server time when chunk received
-  serverRelativeTime: number; // ✅ Time relative to this participant's stream start
+  clientTimestamp: number;
+  serverReceiveTime: number;
+  serverRelativeTime: number;
   size: number;
-  estimatedDuration?: number; // ✅ NEW: Duration of this chunk in ms
+  estimatedDuration?: number;
 }
 
 interface TimingGap {
@@ -57,8 +57,8 @@ interface TimingGap {
   participant2Size?: number;
   participant1Latency?: number;
   participant2Latency?: number;
-  participant1Duration?: number; // ✅ ADD THIS
-  participant2Duration?: number; // ✅ ADD THIS
+  participant1Duration?: number;
+  participant2Duration?: number;
   missingParticipant?: 1 | 2;
 }
 
