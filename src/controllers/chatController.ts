@@ -44,6 +44,8 @@ interface ChunkTimestamp {
   serverRelativeTime: number;
   size: number;
   estimatedDuration?: number;
+  cumulativeBytes: number; // ✅ ADD: Total bytes written so far
+  cumulativeDurationMs: number; // ✅ ADD: Estimated total audio duration so far
 }
 
 interface TimingGap {
@@ -75,10 +77,12 @@ interface RecordingMetadata {
 interface DisconnectionLog {
   disconnectTime: number;
   reconnectTime: number | null;
-  audioPositionMs: number;
+  serverElapsedMs: number; // Wall clock time since recording started
+  audioPositionMs: number; // ✅ Position in the AUDIO FILE where disconnect happened
+  totalBytesAtDisconnect?: number; // ✅ Bytes written at disconnect point
   lastChunkNumber: number;
   reconnectAudioPositionMs?: number;
-  gapDurationMs?: number;
+  gapDurationMs?: number; // ✅ How much silence to insert
 }
 
 export const localRecordingQueue = new Queue("local-recordings", {
@@ -810,42 +814,38 @@ export const chatController = async (
       recordingNumber
     );
 
-    let audioPositionMs: number;
+    // Server elapsed time when disconnect happened
+    const serverElapsedMs = streamInfo
+      ? disconnectTime - streamInfo.serverStartTime
+      : 0;
+
+    // ✅ ACTUAL AUDIO POSITION = cumulative duration of all chunks received
+    let audioPositionInFileMs = 0;
+    let totalBytesReceived = 0;
 
     if (chunks.length > 0) {
       const lastChunk = chunks[chunks.length - 1];
-
-      // ✅ Validate serverRelativeTime is positive
-      if (lastChunk.serverRelativeTime > 0) {
-        audioPositionMs =
-          lastChunk.serverRelativeTime + (lastChunk.estimatedDuration || 40000);
-      } else {
-        // Fallback: calculate from disconnect time
-        audioPositionMs = streamInfo
-          ? disconnectTime - streamInfo.serverStartTime
-          : 0;
-      }
-    } else if (streamInfo) {
-      audioPositionMs = disconnectTime - streamInfo.serverStartTime;
-    } else {
-      audioPositionMs = 0;
+      audioPositionInFileMs =
+        lastChunk.cumulativeDurationMs ||
+        chunks.length * (lastChunk.estimatedDuration || 40000);
+      totalBytesReceived = lastChunk.cumulativeBytes || 0;
     }
-
-    // ✅ Ensure audioPositionMs is never negative
-    audioPositionMs = Math.max(0, audioPositionMs);
 
     const log: DisconnectionLog = {
       disconnectTime,
       reconnectTime: null,
-      audioPositionMs,
+      serverElapsedMs: Math.max(0, serverElapsedMs), // When disconnect happened (wall clock)
+      audioPositionMs: audioPositionInFileMs, // ✅ WHERE IN THE FILE the disconnect happened
+      totalBytesAtDisconnect: totalBytesReceived, // ✅ Bytes written at disconnect
       lastChunkNumber: chunks.length,
+      gapDurationMs: undefined,
     };
 
     console.log(`📝 Saving disconnection log:`, {
-      disconnectTime,
-      audioPositionMs,
+      serverElapsedMs,
+      audioPositionInFileMs,
+      totalBytesReceived,
       lastChunkNumber: chunks.length,
-      serverStartTime: streamInfo?.serverStartTime,
     });
 
     const key = REDIS_KEYS.disconnectionLog(
@@ -857,7 +857,7 @@ export const chatController = async (
     await redis.expire(key, 172800);
 
     console.log(
-      `📝 Logged disconnection for ${userName} at audio position ${audioPositionMs}ms (chunk ${chunks.length})`
+      `📝 Logged disconnection for ${userName} at audio position ${audioPositionInFileMs}ms (${totalBytesReceived} bytes, chunk ${chunks.length})`
     );
   };
 
@@ -876,22 +876,18 @@ export const chatController = async (
 
     if (logs.length === 0) return;
 
-    const chunks = await getChunkTimestamps(
-      meetingName,
-      userName,
-      recordingNumber
-    );
-
     for (let i = logs.length - 1; i >= 0; i--) {
       const log: DisconnectionLog = JSON.parse(logs[i]);
 
       if (log.reconnectTime === null) {
         log.reconnectTime = reconnectTime;
-        log.reconnectAudioPositionMs =
-          chunks.length > 0
-            ? chunks[chunks.length - 1].serverRelativeTime + 40000
-            : log.audioPositionMs;
+
+        // ✅ GAP DURATION = time between disconnect and reconnect
         log.gapDurationMs = reconnectTime - log.disconnectTime;
+
+        // ✅ The audio position where new audio will start appending
+        // (This is the same as audioPositionMs since file is continuous)
+        log.reconnectAudioPositionMs = log.audioPositionMs;
 
         await redis.del(key);
         const updatedLogs = logs.map((item, idx) =>
@@ -902,9 +898,11 @@ export const chatController = async (
         }
         await redis.expire(key, 172800);
 
-        console.log(
-          `📝 Reconnection: gap of ${log.gapDurationMs}ms at audio position ${log.audioPositionMs}ms`
-        );
+        console.log(`📝 Reconnection logged:`, {
+          gapDurationMs: log.gapDurationMs,
+          audioPositionMs: log.audioPositionMs,
+          message: `Insert ${log.gapDurationMs}ms silence at ${log.audioPositionMs}ms in the file`,
+        });
         break;
       }
     }
@@ -1240,18 +1238,39 @@ export const chatController = async (
             stream.write(audioBuffer);
           }
 
-          // ✅ FIX: Use SERVER time, not client timestamp
-          const serverReceiveTime = Date.now(); // ✅ CHANGED
+          const serverReceiveTime = Date.now();
           const serverRelativeTime =
             serverReceiveTime - streamInfo.serverStartTime;
 
+          // ✅ GET PREVIOUS CHUNKS TO CALCULATE CUMULATIVE VALUES
+          const previousChunks = await getChunkTimestamps(
+            meetingName,
+            userName,
+            streamInfo.recordingNumber
+          );
+
+          const previousCumulativeBytes =
+            previousChunks.length > 0
+              ? previousChunks[previousChunks.length - 1].cumulativeBytes || 0
+              : 0;
+
+          const previousCumulativeDuration =
+            previousChunks.length > 0
+              ? previousChunks[previousChunks.length - 1]
+                  .cumulativeDurationMs || 0
+              : 0;
+
+          const chunkDuration = 40000; // 40 seconds per chunk (from MediaRecorder.start(40000))
+
           const chunkInfo: ChunkTimestamp = {
             chunkNumber,
-            clientTimestamp: timestamp, // Keep client timestamp for reference
-            serverReceiveTime, // ✅ Now using actual server time
-            serverRelativeTime, // ✅ Now correctly calculated
+            clientTimestamp: timestamp,
+            serverReceiveTime,
+            serverRelativeTime,
             size: audioBuffer.byteLength,
-            estimatedDuration: 40000,
+            estimatedDuration: chunkDuration,
+            cumulativeBytes: previousCumulativeBytes + audioBuffer.byteLength,
+            cumulativeDurationMs: previousCumulativeDuration + chunkDuration,
           };
 
           const timestampKey = REDIS_KEYS.chunkTimestamps(
@@ -1265,7 +1284,7 @@ export const chatController = async (
 
           if (chunkNumber % 10 === 0) {
             console.log(
-              `📊 ${userName} chunk ${chunkNumber} @ ${serverRelativeTime}ms (${audioBuffer.byteLength} bytes)`
+              `📊 ${userName} chunk ${chunkNumber} @ ${serverRelativeTime}ms (${audioBuffer.byteLength} bytes, cumulative: ${chunkInfo.cumulativeDurationMs}ms)`
             );
           }
         } catch (error: any) {
@@ -1561,7 +1580,6 @@ export const chatController = async (
         } catch (error) {
           console.error("❌ Error stopping audio stream:", error);
 
-          // ✅ TRY TO MARK SESSION AS FAILED
           try {
             const { meetingName } = data;
             const failedSession = await prisma.recordingSession.findFirst({
