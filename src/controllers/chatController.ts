@@ -10,8 +10,6 @@ import path from "path";
 import Queue from "bull";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { transcriptQueue } from "./zoomSDKAuthEndpoint";
-import ffmpeg from "fluent-ffmpeg";
-import { promisify } from "util";
 
 dotenv.config();
 
@@ -799,18 +797,6 @@ export const chatController = async (
     }
   };
 
-  const getAudioDuration = (filePath: string): Promise<number> => {
-    return new Promise((resolve, reject) => {
-      ffmpeg.ffprobe(filePath, (err, metadata) => {
-        if (err) {
-          reject(err);
-        } else {
-          resolve(metadata.format.duration || 0);
-        }
-      });
-    });
-  };
-
   const logDisconnection = async (
     meetingName: string,
     userName: string,
@@ -1026,7 +1012,6 @@ export const chatController = async (
             await clearPendingDisconnect(meetingName, userName);
             console.log(`✅ Cleared pending disconnect for ${userName}`);
 
-            // ✅ LOG RECONNECTION IF RECORDING IS ACTIVE
             const activeRecording = await prisma.recordingSession.findFirst({
               where: { meetingName, isRecording: true },
             });
@@ -1241,14 +1226,13 @@ export const chatController = async (
           const serverRelativeTime =
             serverReceiveTime - streamInfo.serverStartTime;
 
-          // Store timing info with nominal duration (from MediaRecorder.start interval)
           const chunkInfo: ChunkTimestamp = {
             chunkNumber,
             clientTimestamp: timestamp,
             serverReceiveTime,
             serverRelativeTime,
             size: audioBuffer.byteLength,
-            estimatedDuration: 40000, // Nominal duration from MediaRecorder.start(40000)
+            estimatedDuration: 40000,
           };
 
           const timestampKey = REDIS_KEYS.chunkTimestamps(
@@ -1317,7 +1301,6 @@ export const chatController = async (
 
           const recordingNumber = streamInfo.recordingNumber;
 
-          // ✅ GET CHUNK TIMESTAMPS
           const chunkTimestamps = await getChunkTimestamps(
             meetingName,
             userName,
@@ -1389,7 +1372,7 @@ export const chatController = async (
             startTime: new Date(streamInfo.startedAt),
             endTime: new Date(),
             disconnectionPeriods: disconnectionLog,
-            chunkTimestamps, // ✅ ADD CHUNK TIMING DATA
+            chunkTimestamps,
           };
 
           console.log(
