@@ -814,13 +814,25 @@ export const chatController = async (
 
     if (chunks.length > 0) {
       const lastChunk = chunks[chunks.length - 1];
-      audioPositionMs =
-        lastChunk.serverRelativeTime + (lastChunk.estimatedDuration || 40000);
+
+      // ✅ Validate serverRelativeTime is positive
+      if (lastChunk.serverRelativeTime > 0) {
+        audioPositionMs =
+          lastChunk.serverRelativeTime + (lastChunk.estimatedDuration || 40000);
+      } else {
+        // Fallback: calculate from disconnect time
+        audioPositionMs = streamInfo
+          ? disconnectTime - streamInfo.serverStartTime
+          : 0;
+      }
     } else if (streamInfo) {
       audioPositionMs = disconnectTime - streamInfo.serverStartTime;
     } else {
       audioPositionMs = 0;
     }
+
+    // ✅ Ensure audioPositionMs is never negative
+    audioPositionMs = Math.max(0, audioPositionMs);
 
     const log: DisconnectionLog = {
       disconnectTime,
@@ -828,6 +840,13 @@ export const chatController = async (
       audioPositionMs,
       lastChunkNumber: chunks.length,
     };
+
+    console.log(`📝 Saving disconnection log:`, {
+      disconnectTime,
+      audioPositionMs,
+      lastChunkNumber: chunks.length,
+      serverStartTime: streamInfo?.serverStartTime,
+    });
 
     const key = REDIS_KEYS.disconnectionLog(
       meetingName,
@@ -1221,16 +1240,16 @@ export const chatController = async (
             stream.write(audioBuffer);
           }
 
-          // Calculate timing metadata
-          const serverReceiveTime = timestamp;
+          // ✅ FIX: Use SERVER time, not client timestamp
+          const serverReceiveTime = Date.now(); // ✅ CHANGED
           const serverRelativeTime =
             serverReceiveTime - streamInfo.serverStartTime;
 
           const chunkInfo: ChunkTimestamp = {
             chunkNumber,
-            clientTimestamp: timestamp,
-            serverReceiveTime,
-            serverRelativeTime,
+            clientTimestamp: timestamp, // Keep client timestamp for reference
+            serverReceiveTime, // ✅ Now using actual server time
+            serverRelativeTime, // ✅ Now correctly calculated
             size: audioBuffer.byteLength,
             estimatedDuration: 40000,
           };
