@@ -980,16 +980,6 @@ const calculateEarnings = (durationSeconds: number): number => {
   return (durationSeconds / SECONDS_PER_HOUR) * HOURLY_RATE;
 };
 
-interface TimingGap {
-  chunkNumber: number;
-  participant1Time: number | null;
-  participant2Time: number | null;
-  difference: number | null; // Positive = P1 ahead, Negative = P2 ahead
-  participant1Size?: number;
-  participant2Size?: number;
-  missingParticipant?: 1 | 2; // Which participant is missing this chunk
-}
-
 const processConversation = async (
   recording: any,
   meetingName: string,
@@ -1001,7 +991,7 @@ const processConversation = async (
   totalDuration: number,
   folder_name: string,
   disconnections: Record<number, any[]>,
-  timingGaps: TimingGap[] | null
+  initialOffsets: Record<number, number>
 ) => {
   const conversation = await prisma.conversation.findFirst({
     where: { recordingId: recording.id },
@@ -1067,11 +1057,11 @@ const processConversation = async (
 
   const count = validMeetings.length;
 
-  // ✅ GET DISCONNECTIONS FOR THIS PARTICIPANT
   const participantDisconnections =
     disconnections[recording.participantNumber] || [];
+  const participantInitialOffset =
+    initialOffsets[recording.participantNumber] || 0; // ✅ GET OFFSET
 
-  // ✅ ONLY SEND TIMING GAPS FOR PARTICIPANT 1 (to avoid duplication)
   const metadata = await callAPI("/save-metadata", {
     s3_folder_path: `${language}/${folder_name}/recording-${recordingNumber}`,
     gender: conversation.user.gender,
@@ -1081,7 +1071,7 @@ const processConversation = async (
     conversationNumber: count + 1,
     userId: conversation.userId,
     disconnections: participantDisconnections,
-    timingGaps: recording.participantNumber === 1 ? timingGaps : null, // ✅ ONLY SEND FOR PARTICIPANT 1
+    initialOffset: participantInitialOffset, // ✅ SEND OFFSET
   });
 
   if (totalDuration <= 500) {
@@ -1122,7 +1112,7 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
     folder_name,
     sessionId,
     disconnections,
-    timingGaps,
+    initialOffsets,
   } = job.data;
 
   console.log(`📥 Processing transcripts: ${meetingName}`);
@@ -1192,7 +1182,7 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
         totalDuration,
         folder_name,
         disconnections,
-        timingGaps
+        initialOffsets
       );
     })
   );

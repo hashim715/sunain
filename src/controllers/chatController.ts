@@ -37,31 +37,6 @@ interface AudioStreamInfo {
   serverStartTime: number;
 }
 
-interface ChunkTimestamp {
-  chunkNumber: number;
-  clientTimestamp: number;
-  serverReceiveTime: number;
-  serverRelativeTime: number;
-  size: number;
-  estimatedDuration?: number;
-  cumulativeBytes: number; // ✅ ADD: Total bytes written so far
-  cumulativeDurationMs: number; // ✅ ADD: Estimated total audio duration so far
-}
-
-interface TimingGap {
-  chunkNumber: number;
-  participant1Time: number | null;
-  participant2Time: number | null;
-  difference: number | null;
-  participant1Size?: number;
-  participant2Size?: number;
-  participant1Latency?: number;
-  participant2Latency?: number;
-  participant1Duration?: number;
-  participant2Duration?: number;
-  missingParticipant?: 1 | 2;
-}
-
 interface RecordingMetadata {
   meetingName: string;
   recordingNumber: number;
@@ -74,15 +49,17 @@ interface RecordingMetadata {
   disconnectionPeriods?: DisconnectionLog[];
 }
 
+interface ChunkTimestamp {
+  chunkNumber: number;
+  serverReceiveTime: number;
+  cumulativeDurationMs: number; // Total audio duration received so far
+}
+
 interface DisconnectionLog {
   disconnectTime: number;
   reconnectTime: number | null;
-  serverElapsedMs: number; // Wall clock time since recording started
-  audioPositionMs: number; // ✅ Position in the AUDIO FILE where disconnect happened
-  totalBytesAtDisconnect?: number; // ✅ Bytes written at disconnect point
-  lastChunkNumber: number;
-  reconnectAudioPositionMs?: number;
-  gapDurationMs?: number; // ✅ How much silence to insert
+  audioPositionMs: number; // Where in the audio file disconnect happened
+  gapDurationMs?: number; // How much silence to insert
 }
 
 export const localRecordingQueue = new Queue("local-recordings", {
@@ -97,61 +74,6 @@ export const localRecordingQueue = new Queue("local-recordings", {
     removeOnFail: 500,
   },
 });
-
-const analyzeTimingGaps = (
-  participant1Chunks: ChunkTimestamp[],
-  participant2Chunks: ChunkTimestamp[]
-): TimingGap[] => {
-  const gaps: TimingGap[] = [];
-  const maxChunks = Math.max(
-    participant1Chunks.length,
-    participant2Chunks.length
-  );
-
-  for (let i = 0; i < maxChunks; i++) {
-    const p1 = participant1Chunks[i];
-    const p2 = participant2Chunks[i];
-
-    if (p1 && p2) {
-      const timeDiff = p1.serverRelativeTime - p2.serverRelativeTime;
-
-      gaps.push({
-        chunkNumber: i + 1,
-        participant1Time: p1.serverRelativeTime,
-        participant2Time: p2.serverRelativeTime,
-        difference: timeDiff,
-        participant1Size: p1.size,
-        participant2Size: p2.size,
-        participant1Latency: p1.serverReceiveTime - (p1.clientTimestamp || 0),
-        participant2Latency: p2.serverReceiveTime - (p2.clientTimestamp || 0),
-        participant1Duration: p1.estimatedDuration,
-        participant2Duration: p2.estimatedDuration,
-      });
-    } else if (p1 && !p2) {
-      gaps.push({
-        chunkNumber: i + 1,
-        participant1Time: p1.serverRelativeTime,
-        participant2Time: null,
-        difference: null,
-        participant1Size: p1.size,
-        participant1Duration: p1.estimatedDuration,
-        missingParticipant: 2 as 1 | 2,
-      });
-    } else if (!p1 && p2) {
-      gaps.push({
-        chunkNumber: i + 1,
-        participant1Time: null,
-        participant2Time: p2.serverRelativeTime,
-        difference: null,
-        participant2Size: p2.size,
-        participant2Duration: p2.estimatedDuration,
-        missingParticipant: 1 as 1 | 2,
-      });
-    }
-  }
-
-  return gaps;
-};
 
 const activeWriteStreams = new Map<string, fs.WriteStream>();
 const recentlyStoppedStreams = new Map<string, number>();
@@ -773,8 +695,11 @@ export const chatController = async (
         throw new Error("Meeting not found");
       }
 
+      const globalStartTime = Date.now();
+      await redis.set(`meeting:${meetingName}:start_time`, globalStartTime);
+
       io.to(meetingName).emit("start-recording-now", {
-        timestamp: Date.now(),
+        timestamp: globalStartTime,
       });
 
       await redis.del(REDIS_KEYS.recordingReadiness(meetingName));
@@ -807,46 +732,26 @@ export const chatController = async (
     recordingNumber: number,
     disconnectTime: number
   ): Promise<void> => {
-    const streamInfo = await getAudioStreamInfo(meetingName, userName);
+    // Get the last chunk to know audio position
     const chunks = await getChunkTimestamps(
       meetingName,
       userName,
       recordingNumber
     );
 
-    // Server elapsed time when disconnect happened
-    const serverElapsedMs = streamInfo
-      ? disconnectTime - streamInfo.serverStartTime
-      : 0;
-
-    // ✅ ACTUAL AUDIO POSITION = cumulative duration of all chunks received
-    let audioPositionInFileMs = 0;
-    let totalBytesReceived = 0;
-
-    if (chunks.length > 0) {
-      const lastChunk = chunks[chunks.length - 1];
-      audioPositionInFileMs =
-        lastChunk.cumulativeDurationMs ||
-        chunks.length * (lastChunk.estimatedDuration || 40000);
-      totalBytesReceived = lastChunk.cumulativeBytes || 0;
-    }
+    const audioPositionMs =
+      chunks.length > 0 ? chunks[chunks.length - 1].cumulativeDurationMs : 0;
 
     const log: DisconnectionLog = {
       disconnectTime,
       reconnectTime: null,
-      serverElapsedMs: Math.max(0, serverElapsedMs), // When disconnect happened (wall clock)
-      audioPositionMs: audioPositionInFileMs, // ✅ WHERE IN THE FILE the disconnect happened
-      totalBytesAtDisconnect: totalBytesReceived, // ✅ Bytes written at disconnect
-      lastChunkNumber: chunks.length,
+      audioPositionMs,
       gapDurationMs: undefined,
     };
 
-    console.log(`📝 Saving disconnection log:`, {
-      serverElapsedMs,
-      audioPositionInFileMs,
-      totalBytesReceived,
-      lastChunkNumber: chunks.length,
-    });
+    console.log(
+      `📝 Disconnect at audio position ${audioPositionMs}ms (chunk ${chunks.length})`
+    );
 
     const key = REDIS_KEYS.disconnectionLog(
       meetingName,
@@ -855,10 +760,6 @@ export const chatController = async (
     );
     await redis.rpush(key, JSON.stringify(log));
     await redis.expire(key, 172800);
-
-    console.log(
-      `📝 Logged disconnection for ${userName} at audio position ${audioPositionInFileMs}ms (${totalBytesReceived} bytes, chunk ${chunks.length})`
-    );
   };
 
   const logReconnection = async (
@@ -876,33 +777,21 @@ export const chatController = async (
 
     if (logs.length === 0) return;
 
+    // Update last disconnect entry
     for (let i = logs.length - 1; i >= 0; i--) {
       const log: DisconnectionLog = JSON.parse(logs[i]);
 
       if (log.reconnectTime === null) {
         log.reconnectTime = reconnectTime;
-
-        // ✅ GAP DURATION = time between disconnect and reconnect
         log.gapDurationMs = reconnectTime - log.disconnectTime;
 
-        // ✅ The audio position where new audio will start appending
-        // (This is the same as audioPositionMs since file is continuous)
-        log.reconnectAudioPositionMs = log.audioPositionMs;
-
-        await redis.del(key);
-        const updatedLogs = logs.map((item, idx) =>
-          idx === i ? JSON.stringify(log) : item
-        );
-        for (const item of updatedLogs) {
-          await redis.rpush(key, item);
-        }
+        // Update in Redis
+        await redis.lset(key, i, JSON.stringify(log));
         await redis.expire(key, 172800);
 
-        console.log(`📝 Reconnection logged:`, {
-          gapDurationMs: log.gapDurationMs,
-          audioPositionMs: log.audioPositionMs,
-          message: `Insert ${log.gapDurationMs}ms silence at ${log.audioPositionMs}ms in the file`,
-        });
+        console.log(
+          `📝 Reconnect: ${log.gapDurationMs}ms gap at ${log.audioPositionMs}ms`
+        );
         break;
       }
     }
@@ -1007,7 +896,6 @@ export const chatController = async (
       "join-meeting",
       async ({
         meetingName,
-
         isHost,
         sessionID,
         jwtToken,
@@ -1183,112 +1071,82 @@ export const chatController = async (
       }
     );
 
-    socket.on(
-      "audio-chunk",
-      async (data: {
-        meetingName: string;
-        userName: string;
-        chunk: any;
-        timestamp: number;
-        chunkNumber: number;
-      }) => {
-        try {
-          const { meetingName, userName, chunk, timestamp, chunkNumber } = data;
+    socket.on("audio-chunk", async (data) => {
+      try {
+        const { meetingName, userName, chunk, chunkNumber } = data;
 
-          const streamInfo = await getAudioStreamInfo(meetingName, userName);
+        const streamInfo = await getAudioStreamInfo(meetingName, userName);
+        if (!streamInfo) {
+          const key = `${meetingName}:${userName}`;
+          const stoppedAt = recentlyStoppedStreams.get(key);
+          if (stoppedAt && Date.now() - stoppedAt < 2000) return;
+          console.warn(`⚠️ No active stream for ${userName}`);
+          return;
+        }
 
-          if (!streamInfo) {
-            const key = `${meetingName}:${userName}`;
-            const stoppedAt = recentlyStoppedStreams.get(key);
+        let audioBuffer: Buffer;
+        if (Buffer.isBuffer(chunk)) {
+          audioBuffer = chunk;
+        } else if (ArrayBuffer.isView(chunk)) {
+          audioBuffer = Buffer.from(chunk.buffer);
+        } else if (chunk?.type === "Buffer" && Array.isArray(chunk?.data)) {
+          audioBuffer = Buffer.from(chunk.data);
+        } else {
+          console.error(`❌ Unknown chunk type for ${userName}`);
+          return;
+        }
 
-            if (stoppedAt && Date.now() - stoppedAt < 2000) {
-              return;
-            }
+        const stream = getOrCreateWriteStream(socket.id, streamInfo.filepath);
+        if (stream.writable) {
+          stream.write(audioBuffer);
+        }
 
-            console.warn(
-              `⚠️ No active stream for ${userName} in ${meetingName}`
-            );
-            return;
-          }
+        if (chunkNumber === 1) {
+          const globalStartTime = await redis.get(
+            `meeting:${meetingName}:start_time`
+          );
+          const masterStart = globalStartTime
+            ? parseInt(globalStartTime)
+            : streamInfo.serverStartTime;
+          const initialOffset = Date.now() - masterStart;
 
-          let audioBuffer: Buffer;
-
-          if (Buffer.isBuffer(chunk)) {
-            audioBuffer = chunk;
-          } else if (ArrayBuffer.isView(chunk)) {
-            audioBuffer = Buffer.from(chunk.buffer);
-          } else if (chunk?.constructor?.name === "ArrayBuffer") {
-            audioBuffer = Buffer.from(chunk);
-          } else if (Array.isArray(chunk)) {
-            audioBuffer = Buffer.from(chunk);
-          } else if (chunk?.type === "Buffer" && Array.isArray(chunk?.data)) {
-            audioBuffer = Buffer.from(chunk.data);
-          } else {
-            console.error(
-              `❌ Unknown chunk type for ${userName}:`,
-              typeof chunk
-            );
-            return;
-          }
-
-          // Write raw chunk directly to stream file (no reconstruction)
-          const stream = getOrCreateWriteStream(socket.id, streamInfo.filepath);
-
-          if (stream.writable) {
-            stream.write(audioBuffer);
-          }
-
-          const serverReceiveTime = Date.now();
-          const serverRelativeTime =
-            serverReceiveTime - streamInfo.serverStartTime;
-
-          const chunkDuration = 40000; // 40 seconds per chunk (from MediaRecorder.start(40000))
-
-          // ✅ ATOMIC INCREMENT - No need to read all previous chunks
-          const cumulativeKey = `cumulative:${meetingName}:${userName}:${streamInfo.recordingNumber}`;
-
-          const results = await redis
-            .multi()
-            .incrby(`${cumulativeKey}:bytes`, audioBuffer.byteLength)
-            .incrby(`${cumulativeKey}:duration`, chunkDuration)
-            .expire(`${cumulativeKey}:bytes`, 172800)
-            .expire(`${cumulativeKey}:duration`, 172800)
-            .exec();
-
-          // Extract values from multi response
-          const newCumulativeBytes = parseInt(results![0][1] as string);
-          const newCumulativeDuration = parseInt(results![1][1] as string);
-
-          const chunkInfo: ChunkTimestamp = {
-            chunkNumber,
-            clientTimestamp: timestamp,
-            serverReceiveTime,
-            serverRelativeTime,
-            size: audioBuffer.byteLength,
-            estimatedDuration: chunkDuration,
-            cumulativeBytes: newCumulativeBytes,
-            cumulativeDurationMs: newCumulativeDuration,
-          };
-
-          const timestampKey = REDIS_KEYS.chunkTimestamps(
-            meetingName,
-            userName,
-            streamInfo.recordingNumber
+          await redis.set(
+            `initial-offset:${meetingName}:${userName}:${streamInfo.recordingNumber}`,
+            initialOffset,
+            "EX",
+            172800
           );
 
-          await redis.rpush(timestampKey, JSON.stringify(chunkInfo));
-          await redis.expire(timestampKey, 172800);
-
-          if (chunkNumber % 10 === 0) {
-            console.log(
-              `📊 ${userName} chunk ${chunkNumber} @ ${serverRelativeTime}ms (${audioBuffer.byteLength} bytes, cumulative: ${chunkInfo.cumulativeDurationMs}ms)`
-            );
-          }
-        } catch (error: any) {
-          console.error("❌ Error writing audio chunk:", error);
+          console.log(`📍 Initial offset for ${userName}: ${initialOffset}ms`);
         }
+
+        const chunkDuration = 40000; // 40 seconds per chunk
+        const cumulativeDuration = chunkNumber * chunkDuration;
+
+        const chunkInfo: ChunkTimestamp = {
+          chunkNumber,
+          serverReceiveTime: Date.now(),
+          cumulativeDurationMs: cumulativeDuration,
+        };
+
+        const timestampKey = REDIS_KEYS.chunkTimestamps(
+          meetingName,
+          userName,
+          streamInfo.recordingNumber
+        );
+
+        await redis.rpush(timestampKey, JSON.stringify(chunkInfo));
+        await redis.expire(timestampKey, 172800);
+
+        if (chunkNumber % 10 === 0) {
+          console.log(
+            `📊 ${userName} chunk ${chunkNumber} (cumulative: ${cumulativeDuration}ms)`
+          );
+        }
+      } catch (error: any) {
+        console.error("❌ Error writing audio chunk:", error);
       }
-    );
+    });
 
     socket.on(
       "stop-audio-stream",
@@ -1355,11 +1213,6 @@ export const chatController = async (
             userName,
             recordingNumber
           );
-
-          // ✅ ADD: Cleanup cumulative counters
-          const cumulativeKey = `cumulative:${meetingName}:${userName}:${recordingNumber}`;
-          await redis.del(`${cumulativeKey}:bytes`);
-          await redis.del(`${cumulativeKey}:duration`);
 
           let fileExists = false;
           let attempts = 0;
@@ -1499,6 +1352,26 @@ export const chatController = async (
                 meetingName,
                 recordingNumber
               );
+
+              // ✅ COLLECT INITIAL OFFSETS FOR ALL PARTICIPANTS
+              const initialOffsets: Record<number, number> = {};
+
+              for (const rec of sessionRecordings) {
+                const offsetKey = `initial-offset:${meetingName}:${rec.userName}:${recordingNumber}`;
+                const offset = await redis.get(offsetKey);
+
+                if (offset) {
+                  initialOffsets[rec.participantNumber] = parseInt(offset);
+                  console.log(
+                    `📍 Participant ${rec.participantNumber} offset: ${offset}ms`
+                  );
+                } else {
+                  initialOffsets[rec.participantNumber] = 0;
+                  console.warn(
+                    `⚠️ No offset found for participant ${rec.participantNumber}`
+                  );
+                }
+              }
 
               console.log("🔍 Verifying all files...");
               for (const rec of sessionRecordings) {
@@ -2134,16 +2007,6 @@ const mapUsernameToDbUser = async (
 
 const redis = new Redis(process.env.REDIS_URL);
 
-const getChunkTimestamps = async (
-  meetingName: string,
-  userName: string,
-  recordingNumber: number
-): Promise<ChunkTimestamp[]> => {
-  const key = `chunk-timestamps:${meetingName}:${userName}:${recordingNumber}`;
-  const items = await redis.lrange(key, 0, -1);
-  return items.map((item: any) => JSON.parse(item));
-};
-
 localRecordingQueue.process("process-local-recording", async (job: any) => {
   const { meetingName, recordingNumber, recordings } = job.data;
 
@@ -2172,37 +2035,6 @@ localRecordingQueue.process("process-local-recording", async (job: any) => {
         recordingNumber,
       },
     });
-
-    // ✅ GET ALL CHUNK TIMESTAMPS
-    const allChunkTimestamps: Record<number, any[]> = {};
-
-    for (const rec of recordings) {
-      const chunks = await getChunkTimestamps(
-        meetingName,
-        rec.userName,
-        recordingNumber
-      );
-      allChunkTimestamps[rec.participantNumber] = chunks;
-    }
-
-    // ✅ ANALYZE TIMING GAPS
-    let timingGaps = null;
-    if (recordings.length === 2) {
-      timingGaps = analyzeTimingGaps(
-        allChunkTimestamps[1],
-        allChunkTimestamps[2]
-      );
-
-      console.log(`📊 Analyzed ${timingGaps.length} chunk pairs`);
-      console.log(
-        `   Average time difference: ${
-          timingGaps
-            .filter((g) => g.difference !== null)
-            .reduce((sum, g) => sum + Math.abs(g.difference), 0) /
-          timingGaps.filter((g) => g.difference !== null).length
-        }ms`
-      );
-    }
 
     const meetings_date = meeting.createdAt
       .toLocaleString("en-CA", {
@@ -2233,19 +2065,36 @@ localRecordingQueue.process("process-local-recording", async (job: any) => {
 
     const s3Bucket = process.env.S3_BUCKET_NAME!;
 
-    // ✅ COLLECT DISCONNECTIONS FOR EACH PARTICIPANT
+    // ✅ COLLECT DISCONNECTIONS AND INITIAL OFFSETS FOR EACH PARTICIPANT
     const participantDisconnections: Record<number, any[]> = {};
+    const initialOffsets: Record<number, number> = {};
 
     // Process each recording
     for (const rec of recordings) {
       console.log(`📤 Uploading ${rec.userName}'s recording...`);
 
-      // ✅ STORE DISCONNECTIONS BY PARTICIPANT NUMBER
+      // ✅ COLLECT DISCONNECTIONS
       if (rec.disconnectionPeriods && rec.disconnectionPeriods.length > 0) {
         participantDisconnections[rec.participantNumber] =
           rec.disconnectionPeriods;
         console.log(
           `📊 Participant ${rec.participantNumber} has ${rec.disconnectionPeriods.length} disconnection(s)`
+        );
+      }
+
+      // ✅ COLLECT INITIAL OFFSET
+      const offsetKey = `initial-offset:${meetingName}:${rec.userName}:${recordingNumber}`;
+      const offset = await redis.get(offsetKey);
+
+      if (offset) {
+        initialOffsets[rec.participantNumber] = parseInt(offset);
+        console.log(
+          `📍 Participant ${rec.participantNumber} offset: ${offset}ms`
+        );
+      } else {
+        initialOffsets[rec.participantNumber] = 0;
+        console.warn(
+          `⚠️ No offset found for participant ${rec.participantNumber}, using 0ms`
         );
       }
 
@@ -2328,8 +2177,8 @@ localRecordingQueue.process("process-local-recording", async (job: any) => {
         recordingNumber,
         folder_name,
         sessionId: session.id,
-        disconnections: participantDisconnections, // ✅ ADD THIS
-        timingGaps, // ✅ ADD THIS
+        disconnections: participantDisconnections,
+        initialOffsets,
       },
       {
         jobId: `transcript-${meetingName}-${recordingNumber}`,
@@ -2337,10 +2186,13 @@ localRecordingQueue.process("process-local-recording", async (job: any) => {
       }
     );
 
-    // ✅ CLEANUP CHUNK TIMESTAMPS
+    // ✅ CLEANUP CHUNK TIMESTAMPS AND INITIAL OFFSETS
     for (const rec of recordings) {
       await redis.del(
         `chunk-timestamps:${meetingName}:${rec.userName}:${recordingNumber}`
+      );
+      await redis.del(
+        `initial-offset:${meetingName}:${rec.userName}:${recordingNumber}`
       );
     }
 
