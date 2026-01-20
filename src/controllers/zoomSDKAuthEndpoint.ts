@@ -1640,8 +1640,8 @@ export const recordingQueue = new Queue("zoom-recordings", {
   defaultJobOptions: {
     attempts: 10,
     backoff: {
-      type: "fixed",
-      delay: 120000,
+      type: "exponential",
+      delay: 5000, // Start at 5 seconds
     },
     removeOnComplete: 100,
     removeOnFail: 500,
@@ -1655,7 +1655,10 @@ export const transcriptQueue = new Queue("transcript-processing", {
   },
   defaultJobOptions: {
     attempts: 5,
-    backoff: { type: "exponential", delay: 300000 },
+    backoff: {
+      type: "exponential",
+      delay: 10000, // Start at 10 seconds
+    },
     removeOnComplete: 50,
     removeOnFail: 200,
     timeout: 1800000,
@@ -1791,7 +1794,7 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
       },
       {
         jobId: `${meetingName}-${Date.now()}`,
-        delay: 120000,
+        delay: 30000, // Reduce from 2 minutes to 30 seconds
       }
     );
 
