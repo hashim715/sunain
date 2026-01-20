@@ -1120,7 +1120,7 @@ export const chatController = async (
           console.log(`📍 Initial offset for ${userName}: ${initialOffset}ms`);
         }
 
-        const chunkDuration = 40000; // 40 seconds per chunk
+        const chunkDuration = 40000;
         const cumulativeDuration = chunkNumber * chunkDuration;
 
         const chunkInfo: ChunkTimestamp = {
