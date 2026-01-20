@@ -2016,8 +2016,18 @@ recordingQueue.process("process-meeting", async (job: any) => {
       console.log(`📦 Organizing session ${session.recordingNumber}`);
       console.log(`   Files: ${files.length}`);
 
-      const now = new Date();
-      const folderName = now
+      const meetings_date = meeting.createdAt
+        .toLocaleString("en-CA", {
+          timeZone: "America/Los_Angeles",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        })
+        .replace(/,/g, "")
+        .replace(/\s+/g, "-")
+        .toLowerCase();
+
+      const folder_name = `${meetings_date}/${meeting.createdAt
         .toLocaleString("en-CA", {
           timeZone: "America/Los_Angeles",
           year: "numeric",
@@ -2029,10 +2039,7 @@ recordingQueue.process("process-meeting", async (job: any) => {
         })
         .replace(/,/g, "")
         .replace(/\s+/g, "-")
-        .toLowerCase();
-
-      const folder_name = folderName;
-      //const folder_name = new Date().toISOString();
+        .toLowerCase()}`;
 
       for (const s3Key of files) {
         const participantMatch = s3Key.match(/separate(\d+)/);
