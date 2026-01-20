@@ -678,11 +678,13 @@ export const getAllLanguageStats: RequestHandler = async (
   res: Response
 ) => {
   try {
-    // Get all conversations that are completed and unflagged
     const conversations = await prisma.conversation.findMany({
       where: {
         status: "completed",
         flagged_status: false,
+        meeting: {
+          language: "arabic",
+        },
       },
       select: {
         meetingId: true,
@@ -700,7 +702,6 @@ export const getAllLanguageStats: RequestHandler = async (
       },
     });
 
-    // Group by recording (meetingId + recordingNumber)
     const recordingGroups = new Map<
       string,
       {
