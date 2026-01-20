@@ -2436,7 +2436,7 @@ export const chatController = async (
               await prisma.recordingSession.update({
                 where: { id: activeRecording.id },
                 data: {
-                  status: "interrupted",
+                  status: "incomplete",
                   isRecording: false,
                   recordingEndTime: new Date(),
                 },
