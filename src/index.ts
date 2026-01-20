@@ -18,7 +18,7 @@ import {
   recordingQueue,
   transcriptQueue,
 } from "./controllers/zoomSDKAuthEndpoint";
-import { localRecordingQueue } from "./controllers/chatController";
+// import { localRecordingQueue } from "./controllers/chatController";
 import { conversationDataRouter } from "./routes/conversationDataRoutes";
 import { stripeRouter } from "./routes/stripeRoutes";
 import { adminRouter } from "./routes/adminRoutes";
@@ -169,9 +169,9 @@ const start = async (): Promise<void> => {
       await transcriptQueue.pause();
       await transcriptQueue.obliterate({ force: true });
       await transcriptQueue.resume();
-      await localRecordingQueue.pause();
-      await localRecordingQueue.obliterate({ force: true });
-      await localRecordingQueue.resume();
+      // await localRecordingQueue.pause();
+      // await localRecordingQueue.obliterate({ force: true });
+      // await localRecordingQueue.resume();
       logger.info("✅ Queue cleared and ready");
     }
 
