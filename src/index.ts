@@ -152,14 +152,14 @@ const start = async (): Promise<void> => {
   try {
     logger.info("🚀 Starting server...");
 
-    fillTopicData()
-      .catch((e) => {
-        console.error(e);
-        process.exit(1);
-      })
-      .finally(async () => {
-        await prisma.$disconnect();
-      });
+    // fillTopicData()
+    //   .catch((e) => {
+    //     console.error(e);
+    //     process.exit(1);
+    //   })
+    //   .finally(async () => {
+    //     await prisma.$disconnect();
+    //   });
 
     if (process.env.ENV !== "production") {
       logger.info("🗑️ Clearing all jobs from queue...");
