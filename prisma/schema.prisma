@@ -62,7 +62,13 @@ model User {
 
   paypalEmail String? @db.VarChar(255)
   paypalPayoutsEnabled Boolean @default(false)
-  
+
+  revolutEmail String? @db.VarChar(255)
+  revolutePayoutsEnabled Boolean @default(false)
+
+  wiseEmail String? @db.VarChar(255)
+  wisePayoutsEnabled Boolean @default(false)
+
   meetingParticipations MeetingParticipant[]
   conversations Conversation[]
   
