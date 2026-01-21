@@ -12,6 +12,7 @@ import { userRouter } from "./routes/userRoutes";
 import { healthCheckRouter } from "./routes/healthCheckRoutes";
 import { ZoomAuthEndpointRouter } from "./routes/zoomAuthEndpointRoutes";
 import { zoomRouter } from "./routes/zoomRoutes";
+import { annotationRouter } from "./routes/annotationRoutes";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import {
@@ -128,6 +129,7 @@ app.use("/v1/health", healthCheckRouter);
 app.use("/v1/conversationsData", conversationDataRouter);
 app.use("/v1/stripe", stripeRouter);
 app.use("/v1/admin", adminRouter);
+app.use("/v1/annotations", annotationRouter);
 
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {
