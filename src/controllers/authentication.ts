@@ -529,6 +529,13 @@ export const resendCodeToEmail: RequestHandler = async (
 
     const user = await prisma.user.findFirst({ where: { email: email } });
 
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User with that email does not exist",
+      });
+    }
+
     if (user.email_verified) {
       return res.status(400).json({
         success: false,
