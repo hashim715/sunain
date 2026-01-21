@@ -683,7 +683,7 @@ export const getAllLanguageStats: RequestHandler = async (
         status: "completed",
         flagged_status: false,
         meeting: {
-          language: "arabic",
+          language: "Arabic",
         },
       },
       select: {
@@ -727,7 +727,6 @@ export const getAllLanguageStats: RequestHandler = async (
       }
     });
 
-    // Filter recordings with > 1 conversation and group by language
     const languageMap = new Map<
       string,
       { totalHours: number; count: number }
