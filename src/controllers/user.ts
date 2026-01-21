@@ -4,6 +4,7 @@ import jwt_decode from "jwt-decode";
 import { prisma } from "../config/postgres";
 import { logger } from "../utils/logger";
 import { uploadToS3 } from "../utils/uploadToS3";
+import { validateEmail } from "../utils/checkvalidEmail";
 
 export const getAuthorizedUrl: RequestHandler = async (
   req: Request,
@@ -421,9 +422,20 @@ export const addPaypalEmail: RequestHandler = async (
   res: Response
 ) => {
   try {
-    const { paypalEmail } = req.body;
+    const { paypalEmail }: { paypalEmail: string } = req.body;
 
-    console.log(paypalEmail);
+    if (!paypalEmail || !paypalEmail.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid email" });
+    }
+
+    if (!validateEmail(paypalEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "PayPal email is not valid",
+      });
+    }
 
     const token = req.cookies.authToken;
 
@@ -443,14 +455,37 @@ export const addPaypalEmail: RequestHandler = async (
         .json({ success: false, message: "User does not exists" });
     }
 
+    if (user.wiseEmail || user.revolutEmail || user.stripeAccountId) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "You already have a payment method connected. Please remove it first.",
+      });
+    }
+
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        paypalEmail: paypalEmail,
+        NOT: { username: username },
+      },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "This PayPal email is already connected to another account",
+      });
+    }
+
     await prisma.user.update({
-      where: { id: user.id },
+      where: { username: username },
       data: { paypalEmail: paypalEmail, paypalPayoutsEnabled: true },
     });
 
-    return res
-      .status(200)
-      .json({ success: true, message: "Paypal email added successfully" });
+    return res.status(200).json({
+      success: true,
+      message: "PayPal email added successfully",
+    });
   } catch (err) {
     logger.error(`Error in adding paypal email: ${err}`);
     if (!res.headersSent) {
@@ -461,7 +496,165 @@ export const addPaypalEmail: RequestHandler = async (
   }
 };
 
-export const getPaypalEmail: RequestHandler = async (
+export const addWiseEmail: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { wiseEmail }: { wiseEmail: string } = req.body;
+
+    if (!wiseEmail || !wiseEmail.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid email" });
+    }
+
+    if (!validateEmail(wiseEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Wise email is not valid",
+      });
+    }
+
+    const token = req.cookies.authToken;
+
+    if (!token) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    const { username }: { username: string } = jwt_decode(token);
+
+    const user = await prisma.user.findFirst({ where: { username: username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    if (user.paypalEmail || user.revolutEmail || user.stripeAccountId) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "You already have a payment method connected. Please remove it first.",
+      });
+    }
+
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        wiseEmail: wiseEmail,
+        NOT: { username: username },
+      },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "This Wise email is already connected to another account",
+      });
+    }
+
+    await prisma.user.update({
+      where: { username: username },
+      data: { wiseEmail: wiseEmail, wisePayoutsEnabled: true },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Wise email added successfully",
+    });
+  } catch (err) {
+    logger.error(`Error in adding wise email: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const addRevolutEmail: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { revolutEmail }: { revolutEmail: string } = req.body;
+
+    if (!revolutEmail || !revolutEmail.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid email" });
+    }
+
+    if (!validateEmail(revolutEmail)) {
+      return res.status(400).json({
+        success: false,
+        message: "Revolut email is not valid",
+      });
+    }
+
+    const token = req.cookies.authToken;
+
+    if (!token) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    const { username }: { username: string } = jwt_decode(token);
+
+    const user = await prisma.user.findFirst({ where: { username: username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    if (user.paypalEmail || user.wiseEmail || user.stripeAccountId) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "You already have a payment method connected. Please remove it first.",
+      });
+    }
+
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        revolutEmail: revolutEmail,
+        NOT: { username: username },
+      },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "This Revolut email is already connected to another account",
+      });
+    }
+
+    await prisma.user.update({
+      where: { username: username },
+      data: { revolutEmail: revolutEmail, revolutePayoutsEnabled: true },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Revolut email added successfully",
+    });
+  } catch (err) {
+    logger.error(`Error in adding revolut email: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const getPaymentEmails: RequestHandler = async (
   req: Request,
   res: Response
 ) => {
@@ -476,7 +669,14 @@ export const getPaypalEmail: RequestHandler = async (
 
     const { username }: { username: string } = jwt_decode(token);
 
-    const user = await prisma.user.findFirst({ where: { username: username } });
+    const user = await prisma.user.findFirst({
+      where: { username: username },
+      select: {
+        paypalEmail: true,
+        wiseEmail: true,
+        revolutEmail: true,
+      },
+    });
 
     if (!user) {
       return res
@@ -486,11 +686,12 @@ export const getPaypalEmail: RequestHandler = async (
 
     return res.status(200).json({
       success: true,
-      paypalStatus: user.paypalPayoutsEnabled || false,
       paypalEmail: user.paypalEmail || null,
+      wiseEmail: user.wiseEmail || null,
+      revolutEmail: user.revolutEmail || null,
     });
   } catch (err) {
-    logger.error(`Error in getting paypal status: ${err}`);
+    logger.error(`Error in getting payment emails: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }

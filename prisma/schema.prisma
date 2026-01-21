@@ -188,7 +188,7 @@ model Topic {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Many-to-many relationship with meetings
+
   meetings  MeetingTopic[]
 
   @@index([order])
@@ -203,11 +203,11 @@ model MeetingTopic {
   topicId   Int
   topic     Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
   
-  order     Int      // To maintain the order of topics selected (1-5)
+  order     Int      
   
   createdAt DateTime @default(now())
 
-  @@unique([meetingId, topicId]) // Prevent duplicate topic in same meeting
+  @@unique([meetingId, topicId])
   @@index([meetingId])
   @@index([topicId])
 }
