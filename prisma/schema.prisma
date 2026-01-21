@@ -60,7 +60,7 @@ model User {
   stripePayoutsEnabled   Boolean @default(false)
   audio_sample_url String?
 
-  paypaylEmail String? @unique
+  paypalEmail String? @unique
   paypalPayoutsEnabled Boolean @default(false)
   
   meetingParticipations MeetingParticipant[]
