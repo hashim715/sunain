@@ -131,7 +131,7 @@ export const addUserDetails: RequestHandler = async (
           break;
         case "revolut":
           paymentData.revolutEmail = paymentContactInfo;
-          paymentData.revolutPayoutsEnabled = true;
+          paymentData.revolutePayoutsEnabled = true;
           break;
         case "stripe":
           break;
