@@ -605,6 +605,10 @@ export const getAllUsers: RequestHandler = async (
         stripeDetailsSubmitted: user.stripeDetailsSubmitted,
         stripeChargesEnabled: user.stripeChargesEnabled,
         stripePayoutsEnabled: user.stripePayoutsEnabled,
+
+        paypalEmail: user.paypalEmail || "N/A",
+        wiseEmail: user.wiseEmail || "N/A",
+        revolutEmail: user.revolutEmail || "N/A",
       };
     });
 
