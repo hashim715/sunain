@@ -393,3 +393,85 @@ export const getUserEearnings: RequestHandler = async (
     await prisma.$disconnect();
   }
 };
+
+export const addPaypalEmail: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { paypalEmail } = req.body;
+
+    const token = req.cookies.authToken;
+
+    if (!token) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    const { username }: { username: string } = jwt_decode(token);
+
+    const user = await prisma.user.findFirst({ where: { username: username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { paypaylEmail: paypalEmail },
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Paypal email added successfully" });
+  } catch (err) {
+    logger.error(`Error in adding paypal email: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const getPaypalStatus: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const token = req.cookies.authToken;
+
+    if (!token) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    const { username }: { username: string } = jwt_decode(token);
+
+    const user = await prisma.user.findFirst({ where: { username: username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    return res
+      .status(200)
+      .json({
+        success: true,
+        paypalStatus: user.paypalPayoutsEnabled || false,
+      });
+  } catch (err) {
+    logger.error(`Error in getting paypal status: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
