@@ -45,7 +45,7 @@ export const addUserDetails: RequestHandler = async (
   next: NextFunction
 ) => {
   try {
-    let { backgroundInfo } = req.body;
+    let { backgroundInfo, paymentMethod, paymentContactInfo } = req.body;
 
     if (!backgroundInfo) {
       return res
@@ -117,6 +117,27 @@ export const addUserDetails: RequestHandler = async (
       contentType: audioFile.mimetype,
     });
 
+    const paymentData: any = {};
+
+    if (paymentMethod && paymentContactInfo) {
+      switch (paymentMethod) {
+        case "paypal":
+          paymentData.paypalEmail = paymentContactInfo;
+          paymentData.paypalPayoutsEnabled = true;
+          break;
+        case "wise":
+          paymentData.wiseEmail = paymentContactInfo;
+          paymentData.wisePayoutsEnabled = true;
+          break;
+        case "revolut":
+          paymentData.revolutEmail = paymentContactInfo;
+          paymentData.revolutPayoutsEnabled = true;
+          break;
+        case "stripe":
+          break;
+      }
+    }
+
     await prisma.user.update({
       where: { id: user?.id },
       data: {
@@ -142,6 +163,7 @@ export const addUserDetails: RequestHandler = async (
         country: backgroundInfo.country,
         countryCode: backgroundInfo.countryCode,
         state: backgroundInfo.state,
+        ...paymentData,
       },
     });
 
