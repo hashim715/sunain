@@ -401,6 +401,8 @@ export const addPaypalEmail: RequestHandler = async (
   try {
     const { paypalEmail } = req.body;
 
+    console.log(paypalEmail);
+
     const token = req.cookies.authToken;
 
     if (!token) {
@@ -421,7 +423,7 @@ export const addPaypalEmail: RequestHandler = async (
 
     await prisma.user.update({
       where: { id: user.id },
-      data: { paypalEmail: paypalEmail },
+      data: { paypalEmail: paypalEmail, paypalPayoutsEnabled: true },
     });
 
     return res
@@ -437,7 +439,7 @@ export const addPaypalEmail: RequestHandler = async (
   }
 };
 
-export const getPaypalStatus: RequestHandler = async (
+export const getPaypalEmail: RequestHandler = async (
   req: Request,
   res: Response
 ) => {
@@ -463,6 +465,7 @@ export const getPaypalStatus: RequestHandler = async (
     return res.status(200).json({
       success: true,
       paypalStatus: user.paypalPayoutsEnabled || false,
+      paypalEmail: user.paypalEmail || null,
     });
   } catch (err) {
     logger.error(`Error in getting paypal status: ${err}`);

@@ -7,7 +7,7 @@ import {
   getUserMeetingsMetaData,
   getUserEearnings,
   addPaypalEmail,
-  getPaypalStatus,
+  getPaypalEmail,
 } from "../controllers/user";
 
 import multer from "multer";
@@ -34,4 +34,4 @@ userRouter.route("/getUserEarnings").get(protect, getUserEearnings);
 
 userRouter.route("/addPaypalEmail").post(protect, addPaypalEmail);
 
-userRouter.route("/getPaypalStatus").get(protect, getPaypalStatus);
+userRouter.route("/getPaypalEmail").get(protect, getPaypalEmail);
