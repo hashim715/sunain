@@ -548,7 +548,10 @@ export const getAllUsers: RequestHandler = async (
       orderBy: {
         createdAt: "desc",
       },
-      where: { user_type: "user" },
+      where: {
+        user_type: "user",
+        language: "Arabic",
+      },
     });
 
     const formattedUsers = users.map((user) => {
@@ -605,7 +608,6 @@ export const getAllUsers: RequestHandler = async (
         stripeDetailsSubmitted: user.stripeDetailsSubmitted,
         stripeChargesEnabled: user.stripeChargesEnabled,
         stripePayoutsEnabled: user.stripePayoutsEnabled,
-
         paypalEmail: user.paypalEmail || "N/A",
         wiseEmail: user.wiseEmail || "N/A",
         revolutEmail: user.revolutEmail || "N/A",
@@ -929,15 +931,45 @@ export const markRoomsAsPaid: RequestHandler = async (
           id: {
             in: room_ids,
           },
+          language: "Arabic",
         },
         user: {
-          stripeAccountId: {
-            not: null, // or use: isNot: null
-          },
-          stripeChargesEnabled: true,
-          stripeDetailsSubmitted: true,
-          stripeOnboardingComplete: true,
-          stripePayoutsEnabled: true,
+          language: "Arabic",
+          OR: [
+            {
+              AND: [
+                { stripeAccountId: { not: null } },
+                { stripeChargesEnabled: true },
+                { stripeDetailsSubmitted: true },
+                { stripeOnboardingComplete: true },
+                { stripePayoutsEnabled: true },
+              ],
+            },
+
+            {
+              AND: [
+                { paypalEmail: { not: null } },
+                { paypalEmail: { not: "N/A" } },
+                { paypalEmail: { not: "" } },
+              ],
+            },
+
+            {
+              AND: [
+                { wiseEmail: { not: null } },
+                { wiseEmail: { not: "N/A" } },
+                { wiseEmail: { not: "" } },
+              ],
+            },
+
+            {
+              AND: [
+                { revolutEmail: { not: null } },
+                { revolutEmail: { not: "N/A" } },
+                { revolutEmail: { not: "" } },
+              ],
+            },
+          ],
         },
         flagged_status: false,
         paymentStatus: "unpaid",
@@ -950,7 +982,7 @@ export const markRoomsAsPaid: RequestHandler = async (
 
     return res.status(200).json({
       success: true,
-      message: `Marked ${result.count} conversations as paid`,
+      message: `Marked ${result.count} Arabic conversations as paid`,
       updated_count: result.count,
     });
   } catch (err) {
@@ -980,6 +1012,10 @@ export const undoPayroll: RequestHandler = async (
           id: {
             in: room_ids,
           },
+          language: "Arabic",
+        },
+        user: {
+          language: "Arabic",
         },
         paymentStatus: "paid",
       },
@@ -991,7 +1027,7 @@ export const undoPayroll: RequestHandler = async (
 
     return res.status(200).json({
       success: true,
-      message: `Reverted ${result.count} conversations back to unpaid`,
+      message: `Reverted ${result.count} Arabic conversations back to unpaid`,
       updated_count: result.count,
     });
   } catch (err) {
