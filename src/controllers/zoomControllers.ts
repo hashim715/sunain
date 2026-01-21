@@ -310,9 +310,7 @@ export const joinMeeting: RequestHandler = async (
     }
 
     const token = req.cookies.authToken;
-
     const { username }: { username: string } = jwt_decode(token);
-
     const user = await prisma.user.findFirst({ where: { username: username } });
 
     const existingMeeting = await prisma.meeting.findUnique({
@@ -340,10 +338,6 @@ export const joinMeeting: RequestHandler = async (
       });
     }
 
-    if (existingMeeting.participantCount === 2) {
-      return res.status(400).json({ message: "Meeting is full!" });
-    }
-
     if (existingMeeting.passcode !== passcode) {
       return res.status(401).json({
         success: false,
@@ -352,29 +346,25 @@ export const joinMeeting: RequestHandler = async (
     }
 
     const meetingParticipant = await prisma.meetingParticipant.findFirst({
-      where: { meetingId: existingMeeting.id, userId: user.id },
+      where: {
+        meetingId: existingMeeting.id,
+        userId: user.id,
+        leftAt: null,
+      },
     });
 
-    if (existingMeeting.participants.length === 2) {
-      if (!meetingParticipant) {
-        return res.status(400).json({
-          success: false,
-          message: "meeting already occupied by two participants",
-        });
-      }
+    if (meetingParticipant) {
+      return res.status(400).json({
+        success: false,
+        message: "You are already in this meeting",
+      });
     }
 
-    if (meetingParticipant) {
-      await prisma.meeting.update({
-        where: { sessionName: sessionName },
-        data: {
-          isActive: true,
-          participantCount: existingMeeting.participantCount + 1,
-        },
+    if (existingMeeting.participantCount >= 2) {
+      return res.status(400).json({
+        success: false,
+        message: "Meeting is full!",
       });
-      return res
-        .status(200)
-        .json({ message: "Meeting with this session name already exists" });
     }
 
     await prisma.meetingParticipant.create({
