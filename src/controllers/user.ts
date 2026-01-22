@@ -91,6 +91,12 @@ export const addUserDetails: RequestHandler = async (
         .json({ success: false, message: "Please enter valid input" });
     }
 
+    if (!paymentMethod || !paymentContactInfo) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please enter valid payment method" });
+    }
+
     const audioDuration = req.body.audioDuration;
 
     const audioFile = req.file;
