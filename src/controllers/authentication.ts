@@ -329,9 +329,6 @@ export const register: RequestHandler = async (req: Request, res: Response) => {
     Your verification code:
     ${code}
     
-    Or verify here:
-    ${verifyUrl}
-    
     If you didn’t create a Sunain account, you can safely ignore this email.`,
       html: `
       <div style="margin:0;padding:0;background:#f5f5f7;">
@@ -714,9 +711,6 @@ export const resendCodeToEmail: RequestHandler = async (
     
     Your verification code:
     ${code}
-    
-    Or verify here:
-    ${verifyUrl}
     
     If you didn’t create a Sunain account, you can safely ignore this email.`,
       html: `
