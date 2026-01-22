@@ -204,7 +204,6 @@ export const listTimeFolders: RequestHandler = async (
   }
 };
 
-// List recordings for a time folder and find next unannotated
 export const languageTimeFolderRecordingsAndNextUnannotated: RequestHandler =
   async (req: Request, res: Response) => {
     try {
@@ -274,8 +273,6 @@ export const getRecordingFilesPlusAnnotated: RequestHandler = async (
     const decodedRecordingId = decodeURIComponent(recordingId);
     const prefix = `${language}/${dateFolder}/${decodedTime}/${decodedRecordingId}/`;
 
-    console.log("Fetching files from prefix:", prefix);
-
     const command = new ListObjectsV2Command({
       Bucket: BUCKET_NAME,
       Prefix: prefix,
@@ -292,10 +289,18 @@ export const getRecordingFilesPlusAnnotated: RequestHandler = async (
     if (!audioFile || !transcriptFile) {
       return res.status(404).json({ error: "Required files not found" });
     }
+
     const audioUrl = await getSignedUrl(
       s3,
-      new GetObjectCommand({ Bucket: BUCKET_NAME, Key: audioFile.Key }),
-      { expiresIn: 3600 }
+      new GetObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: audioFile.Key,
+        ResponseContentDisposition: "inline",
+        ResponseCacheControl: "no-cache",
+      }),
+      {
+        expiresIn: 3600,
+      }
     );
 
     const transcriptUrl = await getSignedUrl(

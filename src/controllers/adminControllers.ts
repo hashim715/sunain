@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 import { logger } from "../utils/logger";
 import bcrypt from "bcrypt";
 import { sendTokenCookie } from "../utils/sendTokenCookie";
+import { email_transporter } from "../utils/sendEmail";
 
 dotenv.config();
 
@@ -72,6 +73,7 @@ export const getUsersWaitList: RequestHandler = async (
         details_added: true,
         verified: true,
         email_verified: true,
+        language: "Arabic", // ONLY ARABIC USERS
       },
       select: {
         id: true,
@@ -164,6 +166,12 @@ export const flaggedConversations: RequestHandler = async (
       where: {
         flagged_status: true,
         status: "completed",
+        meeting: {
+          language: "Arabic",
+        },
+        user: {
+          language: "Arabic",
+        },
       },
       include: {
         meeting: {
@@ -249,13 +257,22 @@ export const updateConversationFlaggedStatus: RequestHandler = async (
     }
 
     const conversation = await prisma.conversation.findFirst({
-      where: { id: parseInt(conversation_id) },
+      where: {
+        id: parseInt(conversation_id),
+        meeting: {
+          language: "Arabic", // ONLY ARABIC CONVERSATIONS
+        },
+        user: {
+          language: "Arabic", // ONLY ARABIC USERS
+        },
+      },
     });
 
     if (!conversation) {
-      return res
-        .status(404)
-        .json({ success: false, message: "conversation not found" });
+      return res.status(404).json({
+        success: false,
+        message: "conversation not found or not an Arabic conversation",
+      });
     }
 
     await prisma.conversation.update({
@@ -293,12 +310,18 @@ export const flaggedConversationsCount: RequestHandler = async (
 
     const userIdInt = parseInt(userId);
 
-    const user = await prisma.user.findFirst({ where: { id: userIdInt } });
+    const user = await prisma.user.findFirst({
+      where: {
+        id: userIdInt,
+        language: "Arabic",
+      },
+    });
 
     if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "user not found" });
+      return res.status(404).json({
+        success: false,
+        message: "user not found or not an Arabic user",
+      });
     }
 
     const countAsMainUser = await prisma.conversation.count({
@@ -306,6 +329,9 @@ export const flaggedConversationsCount: RequestHandler = async (
         userId: user.id,
         flagged_status: true,
         status: "completed",
+        meeting: {
+          language: "Arabic",
+        },
       },
     });
 
@@ -338,17 +364,26 @@ export const getAllRoomsForUser: RequestHandler = async (
 
     const userIdInt = parseInt(userId);
 
-    const user = await prisma.user.findFirst({ where: { id: userIdInt } });
+    const user = await prisma.user.findFirst({
+      where: {
+        id: userIdInt,
+        language: "Arabic", // ONLY ARABIC USERS
+      },
+    });
 
     if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "user not found" });
+      return res.status(404).json({
+        success: false,
+        message: "user not found or not an Arabic user",
+      });
     }
 
     const participations = await prisma.meetingParticipant.findMany({
       where: {
         userId: user.id,
+        meeting: {
+          language: "Arabic", // ONLY ARABIC MEETINGS
+        },
       },
       include: {
         meeting: {
@@ -393,12 +428,18 @@ export const getPaymentRoomsForUser: RequestHandler = async (
 
     const userIdInt = parseInt(userId);
 
-    const user = await prisma.user.findFirst({ where: { id: userIdInt } });
+    const user = await prisma.user.findFirst({
+      where: {
+        id: userIdInt,
+        language: "Arabic", // ONLY ARABIC USERS
+      },
+    });
 
     if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "user not found" });
+      return res.status(404).json({
+        success: false,
+        message: "user not found or not an Arabic user",
+      });
     }
 
     const unpaidConversations = await prisma.conversation.findMany({
@@ -407,6 +448,9 @@ export const getPaymentRoomsForUser: RequestHandler = async (
         paymentStatus: "unpaid",
         flagged_status: false,
         status: "completed",
+        meeting: {
+          language: "Arabic", // ONLY ARABIC MEETINGS
+        },
       },
       include: {
         meeting: {
@@ -450,6 +494,7 @@ export const getRoomDetails: RequestHandler = async (
     const meeting = await prisma.meeting.findUnique({
       where: {
         id: parseInt(roomId.split("-")[1]),
+        language: "Arabic", // ONLY ARABIC MEETINGS
       },
       include: {
         participants: {
@@ -463,7 +508,10 @@ export const getRoomDetails: RequestHandler = async (
           },
         },
         conversations: {
-          where: { status: "completed", flagged_status: false },
+          where: {
+            status: "completed",
+            flagged_status: false,
+          },
           orderBy: {
             createdAt: "asc",
           },
@@ -478,7 +526,9 @@ export const getRoomDetails: RequestHandler = async (
     });
 
     if (!meeting) {
-      return res.status(404).json({ error: "Room not found" });
+      return res
+        .status(404)
+        .json({ error: "Room not found or not an Arabic meeting" });
     }
 
     const participants = meeting.participants.map((p) => ({
@@ -1032,6 +1082,452 @@ export const undoPayroll: RequestHandler = async (
     });
   } catch (err) {
     logger.error(`Error undoing payroll: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+const hasPaymentMethod = (user: any): boolean => {
+  const hasStripe =
+    user.stripeAccountId &&
+    user.stripeAccountId !== "N/A" &&
+    user.stripeAccountId !== "" &&
+    user.stripeChargesEnabled === true &&
+    user.stripeDetailsSubmitted === true &&
+    user.stripeOnboardingComplete === true &&
+    user.stripePayoutsEnabled === true;
+
+  const hasPayPal =
+    user.paypalEmail && user.paypalEmail !== "N/A" && user.paypalEmail !== "";
+
+  const hasWise =
+    user.wiseEmail && user.wiseEmail !== "N/A" && user.wiseEmail !== "";
+
+  const hasRevolut =
+    user.revolutEmail &&
+    user.revolutEmail !== "N/A" &&
+    user.revolutEmail !== "";
+
+  return hasStripe || hasPayPal || hasWise || hasRevolut;
+};
+
+const generatePaymentReminderEmail = (
+  userName: string,
+  unpaidBalance: number
+) => {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          line-height: 1.6;
+          color: #333;
+        }
+        .container {
+          max-width: 600px;
+          margin: 0 auto;
+          padding: 20px;
+          background-color: #f9f9f9;
+        }
+        .header {
+          background-color: #4F46E5;
+          color: white;
+          padding: 20px;
+          text-align: center;
+          border-radius: 8px 8px 0 0;
+        }
+        .content {
+          background-color: white;
+          padding: 30px;
+          border-radius: 0 0 8px 8px;
+        }
+        .balance {
+          background-color: #FEF3C7;
+          border-left: 4px solid #F59E0B;
+          padding: 15px;
+          margin: 20px 0;
+        }
+        .payment-methods {
+          background-color: #EFF6FF;
+          padding: 20px;
+          border-radius: 8px;
+          margin: 20px 0;
+        }
+        .payment-method {
+          margin: 10px 0;
+          padding: 10px;
+          background-color: white;
+          border-radius: 4px;
+        }
+        .cta-button {
+          display: inline-block;
+          background-color: #4F46E5;
+          color: white;
+          padding: 12px 30px;
+          text-decoration: none;
+          border-radius: 6px;
+          margin: 20px 0;
+        }
+        .footer {
+          text-align: center;
+          margin-top: 20px;
+          color: #666;
+          font-size: 12px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>⚠️ Payment Method Required</h1>
+        </div>
+        <div class="content">
+          <p>Dear ${userName},</p>
+          
+          <p>We hope this email finds you well. We're reaching out to inform you that you currently have unpaid earnings in your account.</p>
+          
+          <div class="balance">
+            <h3>💰 Your Current Unpaid Balance</h3>
+            <h2 style="color: #F59E0B; margin: 10px 0;">$${unpaidBalance.toFixed(
+              2
+            )} USD</h2>
+          </div>
+          
+          <p><strong>Action Required:</strong> To receive your payment, please connect at least one payment method to your account.</p>
+          
+          <div class="payment-methods">
+            <h3>✅ Available Payment Methods:</h3>
+            <div class="payment-method">
+              <strong>💳 Stripe</strong> - Connect your Stripe account for direct bank transfers
+            </div>
+            <div class="payment-method">
+              <strong>🅿️ PayPal</strong> - Add your PayPal email address
+            </div>
+            <div class="payment-method">
+              <strong>🌍 Wise</strong> - Connect your Wise account for international transfers
+            </div>
+            <div class="payment-method">
+              <strong>🔷 Revolut</strong> - Add your Revolut email address
+            </div>
+          </div>
+          
+          <p>Please log in to your account and set up your preferred payment method as soon as possible.</p>
+          
+          <center>
+            <a href="${
+              process.env.FRONTEND_URL || "https://yourapp.com"
+            }/profile/payment" class="cta-button">
+              Set Up Payment Method
+            </a>
+          </center>
+          
+          <p>If you have any questions or need assistance, please don't hesitate to contact our support team.</p>
+          
+          <p>Best regards,<br>The Payroll Team</p>
+        </div>
+        <div class="footer">
+          <p>This is an automated message. Please do not reply to this email.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+};
+
+export const getUsersWithoutPaymentMethod: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const users = await prisma.user.findMany({
+      where: {
+        user_type: "user",
+        language: "Arabic", // Only Arabic users
+        adminVerify: "active", // Only active users
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        stripeAccountId: true,
+        stripeChargesEnabled: true,
+        stripeDetailsSubmitted: true,
+        stripeOnboardingComplete: true,
+        stripePayoutsEnabled: true,
+        paypalEmail: true,
+        wiseEmail: true,
+        revolutEmail: true,
+        conversations: {
+          select: {
+            earnings: true,
+            paymentStatus: true,
+            status: true,
+          },
+          where: {
+            status: "completed",
+            flagged_status: false,
+          },
+        },
+      },
+    });
+
+    const usersWithoutPayment = users.filter((user) => {
+      const hasPayment = hasPaymentMethod(user);
+
+      const unpaidBalance = user.conversations
+        .filter((conv) => conv.paymentStatus === "unpaid")
+        .reduce((sum, conv) => sum + parseFloat(conv.earnings.toString()), 0);
+
+      return !hasPayment && unpaidBalance > 0;
+    });
+
+    const formattedUsers = usersWithoutPayment.map((user) => {
+      const unpaidBalance = user.conversations
+        .filter((conv) => conv.paymentStatus === "unpaid")
+        .reduce((sum, conv) => sum + parseFloat(conv.earnings.toString()), 0);
+
+      return {
+        id: user.id,
+        name: user.name || "N/A",
+        email: user.email,
+        unpaid_balance: parseFloat(unpaidBalance.toFixed(2)),
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      count: formattedUsers.length,
+      users: formattedUsers,
+    });
+  } catch (err) {
+    logger.error(`Error getting users without payment method: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const sendPaymentReminderToUser: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({
+        success: false,
+        message: "User ID is required",
+      });
+    }
+
+    const userIdInt = parseInt(userId);
+
+    const user = await prisma.user.findFirst({
+      where: {
+        id: userIdInt,
+        user_type: "user",
+        language: "Arabic",
+        adminVerify: "active",
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        stripeAccountId: true,
+        stripeChargesEnabled: true,
+        stripeDetailsSubmitted: true,
+        stripeOnboardingComplete: true,
+        stripePayoutsEnabled: true,
+        paypalEmail: true,
+        wiseEmail: true,
+        revolutEmail: true,
+        conversations: {
+          select: {
+            earnings: true,
+            paymentStatus: true,
+            status: true,
+          },
+          where: {
+            status: "completed",
+            flagged_status: false,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found or not an active Arabic user",
+      });
+    }
+
+    const hasPayment = hasPaymentMethod(user);
+    if (hasPayment) {
+      return res.status(400).json({
+        success: false,
+        message: "User already has a payment method configured",
+      });
+    }
+
+    const unpaidBalance = user.conversations
+      .filter((conv) => conv.paymentStatus === "unpaid")
+      .reduce((sum, conv) => sum + parseFloat(conv.earnings.toString()), 0);
+
+    if (unpaidBalance <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "User has no unpaid balance",
+      });
+    }
+
+    const emailHTML = generatePaymentReminderEmail(
+      user.name || "User",
+      unpaidBalance
+    );
+
+    try {
+      await email_transporter.sendMail({
+        from: process.env.EMAIL_FROM,
+        to: user.email,
+        subject: "⚠️ Action Required: Connect Your Payment Method",
+        html: emailHTML,
+      });
+
+      logger.info(
+        `Payment method reminder sent to user ${user.id} (${user.email})`
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: `Reminder email sent successfully to ${user.email}`,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          unpaid_balance: unpaidBalance,
+        },
+      });
+    } catch (emailError) {
+      logger.error(`Failed to send email to ${user.email}: ${emailError}`);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to send reminder email",
+        error: String(emailError),
+      });
+    }
+  } catch (err) {
+    logger.error(`Error sending payment reminder to user: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const sendPaymentMethodReminders: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const users = await prisma.user.findMany({
+      where: {
+        user_type: "user",
+        language: "Arabic",
+        adminVerify: "active",
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        stripeAccountId: true,
+        stripeChargesEnabled: true,
+        stripeDetailsSubmitted: true,
+        stripeOnboardingComplete: true,
+        stripePayoutsEnabled: true,
+        paypalEmail: true,
+        wiseEmail: true,
+        revolutEmail: true,
+        conversations: {
+          select: {
+            earnings: true,
+            paymentStatus: true,
+            status: true,
+          },
+          where: {
+            status: "completed",
+            flagged_status: false,
+          },
+        },
+      },
+    });
+
+    const usersWithoutPayment = users.filter((user) => {
+      const hasPayment = hasPaymentMethod(user);
+
+      const unpaidBalance = user.conversations
+        .filter((conv) => conv.paymentStatus === "unpaid")
+        .reduce((sum, conv) => sum + parseFloat(conv.earnings.toString()), 0);
+
+      return !hasPayment && unpaidBalance > 0;
+    });
+
+    if (usersWithoutPayment.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: "No users without payment methods found",
+        emails_sent: 0,
+      });
+    }
+
+    const emailPromises = usersWithoutPayment.map(async (user) => {
+      const unpaidBalance = user.conversations
+        .filter((conv) => conv.paymentStatus === "unpaid")
+        .reduce((sum, conv) => sum + parseFloat(conv.earnings.toString()), 0);
+
+      const emailHTML = generatePaymentReminderEmail(
+        user.name || "User",
+        unpaidBalance
+      );
+
+      try {
+        await email_transporter.sendMail({
+          from: process.env.EMAIL_FROM,
+          to: user.email,
+          subject: "⚠️ Action Required: Connect Your Payment Method",
+          html: emailHTML,
+        });
+
+        logger.info(`Payment method reminder sent to ${user.email}`);
+        return { success: true, email: user.email };
+      } catch (error) {
+        logger.error(`Failed to send email to ${user.email}: ${error}`);
+        return { success: false, email: user.email, error };
+      }
+    });
+
+    const results = await Promise.all(emailPromises);
+    const successCount = results.filter((r) => r.success).length;
+    const failedCount = results.filter((r) => !r.success).length;
+
+    return res.status(200).json({
+      success: true,
+      message: `Sent ${successCount} emails successfully`,
+      emails_sent: successCount,
+      failed: failedCount,
+      total_users: usersWithoutPayment.length,
+    });
+  } catch (err) {
+    logger.error(`Error sending payment method reminders: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }

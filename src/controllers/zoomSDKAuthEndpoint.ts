@@ -2311,7 +2311,7 @@ const processConversation = async (
     initialOffset: participantInitialOffset,
   });
 
-  if (totalDuration <= 500) {
+  if (totalDuration <= 120) {
     await prisma.conversation.update({
       where: { id: conversation.id },
       data: {

@@ -205,8 +205,123 @@ export const register: RequestHandler = async (req: Request, res: Response) => {
       email
     )}/`;
 
+    // const mailOptions = {
+    //   from: process.env.GOOGLE_APP_EMAIL_FROM,
+    //   to: email,
+    //   subject: "Verify your email — Sunain",
+    //   text: `Verify your email for Sunain
+
+    // Your verification code:
+    // ${code}
+
+    // Or verify here:
+    // ${verifyUrl}
+
+    // If you didn’t create a Sunain account, you can safely ignore this email.`,
+    //   html: `
+    //   <div style="margin:0;padding:0;background:#f5f5f7;">
+    //     <!-- Preheader -->
+    //     <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+    //       Your Sunain verification code is ${String(code)}.
+    //     </div>
+
+    //     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f5f7;padding:40px 0;">
+    //       <tr>
+    //         <td align="center" style="padding:0 16px;">
+    //           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
+    //             <!-- Brand -->
+    //             <tr>
+    //               <td align="center" style="padding:10px 8px 18px 8px;">
+    //                 <div style="font-family:Helvetica,Arial,sans-serif;font-size:13px;letter-spacing:0.6px;color:#6e6e73;">
+    //                   SUNAIN
+    //                 </div>
+    //               </td>
+    //             </tr>
+
+    //             <!-- Card -->
+    //             <tr>
+    //               <td style="background:#ffffff;border:1px solid #e5e5ea;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,0.07);">
+    //                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    //                   <tr>
+    //                     <td style="padding:30px 26px 26px 26px;font-family:Helvetica,Arial,sans-serif;">
+    //                       <div style="font-size:24px;line-height:1.25;font-weight:700;color:#1d1d1f;margin:0 0 10px 0;">
+    //                         Verify your email
+    //                       </div>
+
+    //                       <div style="font-size:15px;line-height:1.65;color:#1d1d1f;margin:0 0 18px 0;">
+    //                         Welcome to Sunain. Confirming your email keeps your account secure and ensures you can receive important updates.
+    //                       </div>
+
+    //                       <!-- Code -->
+    //                       <div style="text-align:center;margin:18px 0 10px 0;">
+    //                         <div style="display:inline-block;background:#f5f5f7;border:1px solid #e5e5ea;border-radius:16px;padding:16px 18px;">
+    //                           <span style="font-family:Helvetica,Arial,sans-serif;font-size:28px;letter-spacing:8px;font-weight:700;color:#111111;">
+    //                             ${String(code)}
+    //                           </span>
+    //                         </div>
+    //                       </div>
+
+    //                       <div style="font-size:13px;line-height:1.55;color:#6e6e73;text-align:center;margin:0 0 22px 0;">
+    //                         This code expires soon for your security.
+    //                       </div>
+
+    //                       <!-- Button -->
+    //                       <div style="text-align:center;margin:0 0 18px 0;">
+    //                         <!--[if mso]>
+    //                           <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="${verifyUrl}" style="height:44px;v-text-anchor:middle;width:210px;" arcsize="28%" stroke="f" fillcolor="#FF0558">
+    //                             <w:anchorlock/>
+    //                             <center style="color:#ffffff;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;">
+    //                               Verify email
+    //                             </center>
+    //                           </v:roundrect>
+    //                         <![endif]-->
+    //                         <!--[if !mso]><!-- -->
+    //                           <a href="${verifyUrl}"
+    //                             style="display:inline-block;background:#FF0558;color:#ffffff;text-decoration:none;padding:14px 22px;border-radius:14px;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:1;">
+    //                             Verify email
+    //                           </a>
+    //                         <!--<![endif]-->
+    //                       </div>
+
+    //                       <!-- Fallback link -->
+    //                       <div style="font-size:12px;line-height:1.6;color:#6e6e73;margin:0;">
+    //                         If the button doesn’t work, copy and paste this link into your browser:
+    //                         <br>
+    //                         <a href="${verifyUrl}" style="color:#007aff;text-decoration:none;word-break:break-all;">
+    //                           ${verifyUrl}
+    //                         </a>
+    //                       </div>
+
+    //                       <hr style="border:none;border-top:1px solid #e5e5ea;margin:22px 0;">
+
+    //                       <div style="font-size:12px;line-height:1.55;color:#8e8e93;margin:0;">
+    //                         If you didn’t request this, no action is required. You can safely ignore this email.
+    //                       </div>
+    //                     </td>
+    //                   </tr>
+    //                 </table>
+    //               </td>
+    //             </tr>
+
+    //             <!-- Footer -->
+    //             <tr>
+    //               <td align="center" style="padding:16px 8px 0 8px;">
+    //                 <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;line-height:1.5;color:#8e8e93;">
+    //                   © ${new Date().getFullYear()} Sunain. All rights reserved.
+    //                 </div>
+    //               </td>
+    //             </tr>
+
+    //           </table>
+    //         </td>
+    //       </tr>
+    //     </table>
+    //   </div>
+    //   `,
+    // };
+
     const mailOptions = {
-      from: process.env.EMAIL_FROM,
+      from: process.env.GOOGLE_APP_EMAIL_FROM,
       to: email,
       subject: "Verify your email — Sunain",
       text: `Verify your email for Sunain
@@ -224,98 +339,6 @@ export const register: RequestHandler = async (req: Request, res: Response) => {
         <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
           Your Sunain verification code is ${String(code)}.
         </div>
-    
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f5f7;padding:40px 0;">
-          <tr>
-            <td align="center" style="padding:0 16px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
-                <!-- Brand -->
-                <tr>
-                  <td align="center" style="padding:10px 8px 18px 8px;">
-                    <div style="font-family:Helvetica,Arial,sans-serif;font-size:13px;letter-spacing:0.6px;color:#6e6e73;">
-                      SUNAIN
-                    </div>
-                  </td>
-                </tr>
-    
-                <!-- Card -->
-                <tr>
-                  <td style="background:#ffffff;border:1px solid #e5e5ea;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,0.07);">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                      <tr>
-                        <td style="padding:30px 26px 26px 26px;font-family:Helvetica,Arial,sans-serif;">
-                          <div style="font-size:24px;line-height:1.25;font-weight:700;color:#1d1d1f;margin:0 0 10px 0;">
-                            Verify your email
-                          </div>
-    
-                          <div style="font-size:15px;line-height:1.65;color:#1d1d1f;margin:0 0 18px 0;">
-                            Welcome to Sunain. Confirming your email keeps your account secure and ensures you can receive important updates.
-                          </div>
-    
-                          <!-- Code -->
-                          <div style="text-align:center;margin:18px 0 10px 0;">
-                            <div style="display:inline-block;background:#f5f5f7;border:1px solid #e5e5ea;border-radius:16px;padding:16px 18px;">
-                              <span style="font-family:Helvetica,Arial,sans-serif;font-size:28px;letter-spacing:8px;font-weight:700;color:#111111;">
-                                ${String(code)}
-                              </span>
-                            </div>
-                          </div>
-    
-                          <div style="font-size:13px;line-height:1.55;color:#6e6e73;text-align:center;margin:0 0 22px 0;">
-                            This code expires soon for your security.
-                          </div>
-    
-                          <!-- Button -->
-                          <div style="text-align:center;margin:0 0 18px 0;">
-                            <!--[if mso]>
-                              <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="${verifyUrl}" style="height:44px;v-text-anchor:middle;width:210px;" arcsize="28%" stroke="f" fillcolor="#FF0558">
-                                <w:anchorlock/>
-                                <center style="color:#ffffff;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;">
-                                  Verify email
-                                </center>
-                              </v:roundrect>
-                            <![endif]-->
-                            <!--[if !mso]><!-- -->
-                              <a href="${verifyUrl}"
-                                style="display:inline-block;background:#FF0558;color:#ffffff;text-decoration:none;padding:14px 22px;border-radius:14px;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:1;">
-                                Verify email
-                              </a>
-                            <!--<![endif]-->
-                          </div>
-    
-                          <!-- Fallback link -->
-                          <div style="font-size:12px;line-height:1.6;color:#6e6e73;margin:0;">
-                            If the button doesn’t work, copy and paste this link into your browser:
-                            <br>
-                            <a href="${verifyUrl}" style="color:#007aff;text-decoration:none;word-break:break-all;">
-                              ${verifyUrl}
-                            </a>
-                          </div>
-    
-                          <hr style="border:none;border-top:1px solid #e5e5ea;margin:22px 0;">
-    
-                          <div style="font-size:12px;line-height:1.55;color:#8e8e93;margin:0;">
-                            If you didn’t request this, no action is required. You can safely ignore this email.
-                          </div>
-                        </td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-    
-                <!-- Footer -->
-                <tr>
-                  <td align="center" style="padding:16px 8px 0 8px;">
-                    <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;line-height:1.5;color:#8e8e93;">
-                      © ${new Date().getFullYear()} Sunain. All rights reserved.
-                    </div>
-                  </td>
-                </tr>
-    
-              </table>
-            </td>
-          </tr>
-        </table>
       </div>
       `,
     };
@@ -568,8 +591,123 @@ export const resendCodeToEmail: RequestHandler = async (
       email
     )}/`;
 
+    // const mailOptions = {
+    //   from: process.env.GOOGLE_APP_EMAIL_FROM,
+    //   to: email,
+    //   subject: "Verify your email — Sunain",
+    //   text: `Verify your email for Sunain
+
+    // Your verification code:
+    // ${code}
+
+    // Or verify here:
+    // ${verifyUrl}
+
+    // If you didn’t create a Sunain account, you can safely ignore this email.`,
+    //   html: `
+    //   <div style="margin:0;padding:0;background:#f5f5f7;">
+    //     <!-- Preheader -->
+    //     <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+    //       Your Sunain verification code is ${String(code)}.
+    //     </div>
+
+    //     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f5f7;padding:40px 0;">
+    //       <tr>
+    //         <td align="center" style="padding:0 16px;">
+    //           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
+    //             <!-- Brand -->
+    //             <tr>
+    //               <td align="center" style="padding:10px 8px 18px 8px;">
+    //                 <div style="font-family:Helvetica,Arial,sans-serif;font-size:13px;letter-spacing:0.6px;color:#6e6e73;">
+    //                   SUNAIN
+    //                 </div>
+    //               </td>
+    //             </tr>
+
+    //             <!-- Card -->
+    //             <tr>
+    //               <td style="background:#ffffff;border:1px solid #e5e5ea;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,0.07);">
+    //                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+    //                   <tr>
+    //                     <td style="padding:30px 26px 26px 26px;font-family:Helvetica,Arial,sans-serif;">
+    //                       <div style="font-size:24px;line-height:1.25;font-weight:700;color:#1d1d1f;margin:0 0 10px 0;">
+    //                         Verify your email
+    //                       </div>
+
+    //                       <div style="font-size:15px;line-height:1.65;color:#1d1d1f;margin:0 0 18px 0;">
+    //                         Welcome to Sunain. Confirming your email keeps your account secure and ensures you can receive important updates.
+    //                       </div>
+
+    //                       <!-- Code -->
+    //                       <div style="text-align:center;margin:18px 0 10px 0;">
+    //                         <div style="display:inline-block;background:#f5f5f7;border:1px solid #e5e5ea;border-radius:16px;padding:16px 18px;">
+    //                           <span style="font-family:Helvetica,Arial,sans-serif;font-size:28px;letter-spacing:8px;font-weight:700;color:#111111;">
+    //                             ${String(code)}
+    //                           </span>
+    //                         </div>
+    //                       </div>
+
+    //                       <div style="font-size:13px;line-height:1.55;color:#6e6e73;text-align:center;margin:0 0 22px 0;">
+    //                         This code expires soon for your security.
+    //                       </div>
+
+    //                       <!-- Button -->
+    //                       <div style="text-align:center;margin:0 0 18px 0;">
+    //                         <!--[if mso]>
+    //                           <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="${verifyUrl}" style="height:44px;v-text-anchor:middle;width:210px;" arcsize="28%" stroke="f" fillcolor="#FF0558">
+    //                             <w:anchorlock/>
+    //                             <center style="color:#ffffff;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;">
+    //                               Verify email
+    //                             </center>
+    //                           </v:roundrect>
+    //                         <![endif]-->
+    //                         <!--[if !mso]><!-- -->
+    //                           <a href="${verifyUrl}"
+    //                             style="display:inline-block;background:#FF0558;color:#ffffff;text-decoration:none;padding:14px 22px;border-radius:14px;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:1;">
+    //                             Verify email
+    //                           </a>
+    //                         <!--<![endif]-->
+    //                       </div>
+
+    //                       <!-- Fallback link -->
+    //                       <div style="font-size:12px;line-height:1.6;color:#6e6e73;margin:0;">
+    //                         If the button doesn’t work, copy and paste this link into your browser:
+    //                         <br>
+    //                         <a href="${verifyUrl}" style="color:#007aff;text-decoration:none;word-break:break-all;">
+    //                           ${verifyUrl}
+    //                         </a>
+    //                       </div>
+
+    //                       <hr style="border:none;border-top:1px solid #e5e5ea;margin:22px 0;">
+
+    //                       <div style="font-size:12px;line-height:1.55;color:#8e8e93;margin:0;">
+    //                         If you didn’t request this, no action is required. You can safely ignore this email.
+    //                       </div>
+    //                     </td>
+    //                   </tr>
+    //                 </table>
+    //               </td>
+    //             </tr>
+
+    //             <!-- Footer -->
+    //             <tr>
+    //               <td align="center" style="padding:16px 8px 0 8px;">
+    //                 <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;line-height:1.5;color:#8e8e93;">
+    //                   © ${new Date().getFullYear()} Sunain. All rights reserved.
+    //                 </div>
+    //               </td>
+    //             </tr>
+
+    //           </table>
+    //         </td>
+    //       </tr>
+    //     </table>
+    //   </div>
+    //   `,
+    // };
+
     const mailOptions = {
-      from: process.env.EMAIL_FROM,
+      from: process.env.GOOGLE_APP_EMAIL_FROM,
       to: email,
       subject: "Verify your email — Sunain",
       text: `Verify your email for Sunain
@@ -587,98 +725,6 @@ export const resendCodeToEmail: RequestHandler = async (
         <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
           Your Sunain verification code is ${String(code)}.
         </div>
-    
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f5f5f7;padding:40px 0;">
-          <tr>
-            <td align="center" style="padding:0 16px;">
-              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;">
-                <!-- Brand -->
-                <tr>
-                  <td align="center" style="padding:10px 8px 18px 8px;">
-                    <div style="font-family:Helvetica,Arial,sans-serif;font-size:13px;letter-spacing:0.6px;color:#6e6e73;">
-                      SUNAIN
-                    </div>
-                  </td>
-                </tr>
-    
-                <!-- Card -->
-                <tr>
-                  <td style="background:#ffffff;border:1px solid #e5e5ea;border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,0.07);">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
-                      <tr>
-                        <td style="padding:30px 26px 26px 26px;font-family:Helvetica,Arial,sans-serif;">
-                          <div style="font-size:24px;line-height:1.25;font-weight:700;color:#1d1d1f;margin:0 0 10px 0;">
-                            Verify your email
-                          </div>
-    
-                          <div style="font-size:15px;line-height:1.65;color:#1d1d1f;margin:0 0 18px 0;">
-                            Welcome to Sunain. Confirming your email keeps your account secure and ensures you can receive important updates.
-                          </div>
-    
-                          <!-- Code -->
-                          <div style="text-align:center;margin:18px 0 10px 0;">
-                            <div style="display:inline-block;background:#f5f5f7;border:1px solid #e5e5ea;border-radius:16px;padding:16px 18px;">
-                              <span style="font-family:Helvetica,Arial,sans-serif;font-size:28px;letter-spacing:8px;font-weight:700;color:#111111;">
-                                ${String(code)}
-                              </span>
-                            </div>
-                          </div>
-    
-                          <div style="font-size:13px;line-height:1.55;color:#6e6e73;text-align:center;margin:0 0 22px 0;">
-                            This code expires soon for your security.
-                          </div>
-    
-                          <!-- Button -->
-                          <div style="text-align:center;margin:0 0 18px 0;">
-                            <!--[if mso]>
-                              <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="${verifyUrl}" style="height:44px;v-text-anchor:middle;width:210px;" arcsize="28%" stroke="f" fillcolor="#FF0558">
-                                <w:anchorlock/>
-                                <center style="color:#ffffff;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;">
-                                  Verify email
-                                </center>
-                              </v:roundrect>
-                            <![endif]-->
-                            <!--[if !mso]><!-- -->
-                              <a href="${verifyUrl}"
-                                style="display:inline-block;background:#FF0558;color:#ffffff;text-decoration:none;padding:14px 22px;border-radius:14px;font-family:Helvetica,Arial,sans-serif;font-size:15px;font-weight:700;line-height:1;">
-                                Verify email
-                              </a>
-                            <!--<![endif]-->
-                          </div>
-    
-                          <!-- Fallback link -->
-                          <div style="font-size:12px;line-height:1.6;color:#6e6e73;margin:0;">
-                            If the button doesn’t work, copy and paste this link into your browser:
-                            <br>
-                            <a href="${verifyUrl}" style="color:#007aff;text-decoration:none;word-break:break-all;">
-                              ${verifyUrl}
-                            </a>
-                          </div>
-    
-                          <hr style="border:none;border-top:1px solid #e5e5ea;margin:22px 0;">
-    
-                          <div style="font-size:12px;line-height:1.55;color:#8e8e93;margin:0;">
-                            If you didn’t request this, no action is required. You can safely ignore this email.
-                          </div>
-                        </td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
-    
-                <!-- Footer -->
-                <tr>
-                  <td align="center" style="padding:16px 8px 0 8px;">
-                    <div style="font-family:Helvetica,Arial,sans-serif;font-size:11px;line-height:1.5;color:#8e8e93;">
-                      © ${new Date().getFullYear()} Sunain. All rights reserved.
-                    </div>
-                  </td>
-                </tr>
-    
-              </table>
-            </td>
-          </tr>
-        </table>
       </div>
       `,
     };

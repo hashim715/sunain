@@ -203,6 +203,8 @@ export const getUserDetails: RequestHandler = async (
         .json({ success: false, message: "User does not exists" });
     }
 
+    console.log(user);
+
     return res.status(200).json({ success: true, message: user });
   } catch (err) {
     logger.error(`Error in getting user: ${err}`);
