@@ -71,6 +71,9 @@ model User {
 
   meetingParticipations MeetingParticipant[]
   conversations Conversation[]
+
+  annotation_recordings String[] @default([])
+  is_annotator Boolean @default(false)
   
   @@map("users")
 }

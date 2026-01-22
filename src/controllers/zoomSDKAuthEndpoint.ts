@@ -2225,10 +2225,7 @@ const processConversation = async (
   speakerQuality: number,
   flagging: boolean,
   flaggin_reasons: string[],
-  totalDuration: number,
-  folder_name: string,
-  disconnections: Record<number, any[]>,
-  initialOffsets: Record<number, number>
+  folder_name: string
 ) => {
   const conversation = await prisma.conversation.findFirst({
     where: { recordingId: recording.id },
@@ -2294,22 +2291,18 @@ const processConversation = async (
 
   const count = validMeetings.length;
 
-  const participantDisconnections =
-    disconnections[recording.participantNumber] || [];
-  const participantInitialOffset =
-    initialOffsets[recording.participantNumber] || 0;
-
-  const metadata = await callAPI("/save-metadata", {
+  const metadataResponse = await callAPI("/save-metadata", {
     s3_folder_path: `${language}/${folder_name}/recording-${recordingNumber}`,
     gender: conversation.user.gender,
     speaker_number: recording.participantNumber,
     age: calculateAge(conversation.user.date_of_birth),
     dialect: conversation.user.language_dialect,
-    conversationNumber: count + 1,
     userId: conversation.userId,
-    disconnections: participantDisconnections,
-    initialOffset: participantInitialOffset,
   });
+
+  const totalDuration = metadataResponse?.metadata?.total_duration || 0;
+
+  console.log(`✅ Got duration from metadata API: ${totalDuration}s`);
 
   if (totalDuration <= 120) {
     await prisma.conversation.update({
@@ -2409,10 +2402,7 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
         speakerQuality,
         flagging_response.should_flag,
         flagging_response.reasons,
-        totalDuration,
-        folder_name,
-        {}, // Empty disconnections for Zoom
-        {} // Empty initialOffsets for Zoom
+        folder_name
       );
     })
   );

@@ -17,6 +17,16 @@ import {
   markRoomsAsPaid,
   undoPayroll,
   login,
+  getUsersWithoutPaymentMethod,
+  sendPaymentMethodReminders,
+  sendPaymentReminderToUser,
+  createAnnotator,
+  listAnnotators,
+  updateAnnotatorFolders,
+  deleteAnnotator,
+  assignRecordingsToAnnotators,
+  clearAllAssignments,
+  getAssignmentStats,
 } from "../controllers/adminControllers";
 import { protectAdmin } from "../middleware/adminMiddleware";
 
@@ -57,23 +67,25 @@ adminRouter.route("/markRoomsAsPaid").post(protectAdmin, markRoomsAsPaid);
 adminRouter.route("/undoPayroll").post(protectAdmin, undoPayroll);
 adminRouter.route("/login").post(login);
 
-// adminRouter.route("/getUserWaitList").get(getUsersWaitList);
-// adminRouter.route("/updateUserStatus").post(updateUserStatus);
-// adminRouter.route("/allflaggedConversations").get(flaggedConversations);
-// adminRouter.route("/unflagConversation").post(updateConversationFlaggedStatus);
-// adminRouter.route("/flagged-count/:userId").get(flaggedConversationsCount);
-// adminRouter.route("/getAllRoomsForUser/:userId").get(getAllRoomsForUser);
-// adminRouter
-//   .route("/getPaymentRoomsForUser/:userId")
-//   .get(getPaymentRoomsForUser);
-// adminRouter.route("/getRoomDetails/:roomId").get(getRoomDetails);
-// adminRouter.route("/getAllUsers").get(getAllUsers);
-// adminRouter.route("/getLanguageStats/:language").get(getLanguageStats);
-// adminRouter.route("/getAllLanguageStats").get(getAllLanguageStats);
-// adminRouter
-//   .route("/getDialectDistribution/:language")
-//   .get(getDialectDistribution);
-// adminRouter.route("/getDialectPairs/:language").get(getDialectPairs);
-// adminRouter.route("/markRoomsAsPaid").post(markRoomsAsPaid);
-// adminRouter.route("/undoPayroll").post(undoPayroll);
-// adminRouter.route("/login").post(login);
+adminRouter
+  .route("/users-without-payment")
+  .get(protectAdmin, getUsersWithoutPaymentMethod);
+adminRouter
+  .route("/send-payment-reminder/:userId")
+  .post(protectAdmin, sendPaymentReminderToUser);
+adminRouter
+  .route("/send-payment-reminders")
+  .post(protectAdmin, sendPaymentMethodReminders);
+adminRouter.route("/createAnnotator").post(protectAdmin, createAnnotator);
+adminRouter.route("/annotators").get(protectAdmin, listAnnotators);
+adminRouter
+  .route("/annotators/:annotatorId")
+  .post(protectAdmin, updateAnnotatorFolders);
+adminRouter
+  .route("/annotators/:annotatorId")
+  .post(protectAdmin, deleteAnnotator);
+adminRouter
+  .route("/assign-recordings")
+  .post(protectAdmin, assignRecordingsToAnnotators);
+adminRouter.route("/clear-assignments").post(protectAdmin, clearAllAssignments);
+adminRouter.route("/assignment-stats").get(protectAdmin, getAssignmentStats);

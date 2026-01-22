@@ -9,9 +9,13 @@ import {
   getNextAvailableRecording,
   uploadAnnotationFile,
   getPreviousAvailableRecording,
+  getFirstRecordingForUser,
+  login,
 } from "../controllers/annotationControllers";
 
 export const annotationRouter: Router = express.Router();
+
+annotationRouter.route("/login").post(login);
 
 annotationRouter.route("/listLanguages").get(listLanguages);
 
@@ -42,5 +46,9 @@ annotationRouter.get(
   "/previousRecording/:language/:dateFolder/:currentTimeFolder/:currentRecordingId",
   getPreviousAvailableRecording
 );
+
+annotationRouter
+  .route("/firstRecording/:language")
+  .get(getFirstRecordingForUser);
 
 annotationRouter.route("/uploadAnnotationFile").post(uploadAnnotationFile);

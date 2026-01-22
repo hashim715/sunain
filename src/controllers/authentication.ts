@@ -324,17 +324,33 @@ export const register: RequestHandler = async (req: Request, res: Response) => {
       from: process.env.GOOGLE_APP_EMAIL_FROM,
       to: email,
       subject: "Verify your email — Sunain",
+
       text: `Verify your email for Sunain
     
     Your verification code:
     ${code}
     
     If you didn’t create a Sunain account, you can safely ignore this email.`,
+
       html: `
-      <div style="margin:0;padding:0;background:#f5f5f7;">
+      <div style="margin:0;padding:0;background:#f5f5f7;font-family:Arial,sans-serif;">
         <!-- Preheader -->
         <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
           Your Sunain verification code is ${String(code)}.
+        </div>
+    
+        <div style="max-width:600px;margin:0 auto;padding:24px;background:#ffffff;border-radius:8px;">
+          <h2 style="margin-top:0;">Verify your email for Sunain</h2>
+    
+          <p>Your verification code:</p>
+    
+          <div style="font-size:24px;font-weight:bold;letter-spacing:4px;margin:16px 0;">
+            ${code}
+          </div>
+    
+          <p style="color:#666;">
+            If you didn’t create a Sunain account, you can safely ignore this email.
+          </p>
         </div>
       </div>
       `,
@@ -411,6 +427,13 @@ export const login: RequestHandler = async (req: Request, res: Response) => {
       return res.status(400).json({
         success: false,
         message: "your email is not verified",
+      });
+    }
+
+    if (user.is_annotator) {
+      return res.status(403).json({
+        success: false,
+        message: "Annotators are not allowed to login here",
       });
     }
 
@@ -707,17 +730,33 @@ export const resendCodeToEmail: RequestHandler = async (
       from: process.env.GOOGLE_APP_EMAIL_FROM,
       to: email,
       subject: "Verify your email — Sunain",
+
       text: `Verify your email for Sunain
     
     Your verification code:
     ${code}
     
     If you didn’t create a Sunain account, you can safely ignore this email.`,
+
       html: `
-      <div style="margin:0;padding:0;background:#f5f5f7;">
+      <div style="margin:0;padding:0;background:#f5f5f7;font-family:Arial,sans-serif;">
         <!-- Preheader -->
         <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
           Your Sunain verification code is ${String(code)}.
+        </div>
+    
+        <div style="max-width:600px;margin:0 auto;padding:24px;background:#ffffff;border-radius:8px;">
+          <h2 style="margin-top:0;">Verify your email for Sunain</h2>
+    
+          <p>Your verification code:</p>
+    
+          <div style="font-size:24px;font-weight:bold;letter-spacing:4px;margin:16px 0;">
+            ${code}
+          </div>
+    
+          <p style="color:#666;">
+            If you didn’t create a Sunain account, you can safely ignore this email.
+          </p>
         </div>
       </div>
       `,

@@ -6,8 +6,18 @@ import { logger } from "../utils/logger";
 import bcrypt from "bcrypt";
 import { sendTokenCookie } from "../utils/sendTokenCookie";
 import { email_transporter } from "../utils/sendEmail";
+import { validateEmail } from "../utils/checkvalidEmail";
+import {
+  S3Client,
+  ListObjectsV2Command,
+  GetObjectCommand,
+  PutObjectCommand,
+} from "@aws-sdk/client-s3";
+import { s3 } from "../config/aws_s3";
 
 dotenv.config();
+
+const BUCKET_NAME = process.env.S3_BUCKET_NAME;
 
 export const login: RequestHandler = async (req: Request, res: Response) => {
   try {
@@ -1132,106 +1142,23 @@ const generatePaymentReminderEmail = (
           max-width: 600px;
           margin: 0 auto;
           padding: 20px;
-          background-color: #f9f9f9;
-        }
-        .header {
-          background-color: #4F46E5;
-          color: white;
-          padding: 20px;
-          text-align: center;
-          border-radius: 8px 8px 0 0;
         }
         .content {
           background-color: white;
           padding: 30px;
-          border-radius: 0 0 8px 8px;
-        }
-        .balance {
-          background-color: #FEF3C7;
-          border-left: 4px solid #F59E0B;
-          padding: 15px;
-          margin: 20px 0;
-        }
-        .payment-methods {
-          background-color: #EFF6FF;
-          padding: 20px;
-          border-radius: 8px;
-          margin: 20px 0;
-        }
-        .payment-method {
-          margin: 10px 0;
-          padding: 10px;
-          background-color: white;
-          border-radius: 4px;
-        }
-        .cta-button {
-          display: inline-block;
-          background-color: #4F46E5;
-          color: white;
-          padding: 12px 30px;
-          text-decoration: none;
-          border-radius: 6px;
-          margin: 20px 0;
-        }
-        .footer {
-          text-align: center;
-          margin-top: 20px;
-          color: #666;
-          font-size: 12px;
         }
       </style>
     </head>
     <body>
       <div class="container">
-        <div class="header">
-          <h1>⚠️ Payment Method Required</h1>
-        </div>
         <div class="content">
-          <p>Dear ${userName},</p>
+          <p>Hi,</p>
           
-          <p>We hope this email finds you well. We're reaching out to inform you that you currently have unpaid earnings in your account.</p>
+          <p>Thank you for completing a voice recording session with us. To proceed with your payment, please add a supported payment method in your dashboard (Stripe, PayPal, Revolut, or Wise).</p>
           
-          <div class="balance">
-            <h3>💰 Your Current Unpaid Balance</h3>
-            <h2 style="color: #F59E0B; margin: 10px 0;">$${unpaidBalance.toFixed(
-              2
-            )} USD</h2>
-          </div>
+          <p>Once added, we'll be able to process your compensation promptly.</p>
           
-          <p><strong>Action Required:</strong> To receive your payment, please connect at least one payment method to your account.</p>
-          
-          <div class="payment-methods">
-            <h3>✅ Available Payment Methods:</h3>
-            <div class="payment-method">
-              <strong>💳 Stripe</strong> - Connect your Stripe account for direct bank transfers
-            </div>
-            <div class="payment-method">
-              <strong>🅿️ PayPal</strong> - Add your PayPal email address
-            </div>
-            <div class="payment-method">
-              <strong>🌍 Wise</strong> - Connect your Wise account for international transfers
-            </div>
-            <div class="payment-method">
-              <strong>🔷 Revolut</strong> - Add your Revolut email address
-            </div>
-          </div>
-          
-          <p>Please log in to your account and set up your preferred payment method as soon as possible.</p>
-          
-          <center>
-            <a href="${
-              process.env.FRONTEND_URL || "https://yourapp.com"
-            }/profile/payment" class="cta-button">
-              Set Up Payment Method
-            </a>
-          </center>
-          
-          <p>If you have any questions or need assistance, please don't hesitate to contact our support team.</p>
-          
-          <p>Best regards,<br>The Payroll Team</p>
-        </div>
-        <div class="footer">
-          <p>This is an automated message. Please do not reply to this email.</p>
+          <p>Best regards,<br>Support Team</p>
         </div>
       </div>
     </body>
@@ -1247,8 +1174,8 @@ export const getUsersWithoutPaymentMethod: RequestHandler = async (
     const users = await prisma.user.findMany({
       where: {
         user_type: "user",
-        language: "Arabic", // Only Arabic users
-        adminVerify: "active", // Only active users
+        language: "Arabic",
+        adminVerify: "active",
       },
       select: {
         id: true,
@@ -1396,9 +1323,9 @@ export const sendPaymentReminderToUser: RequestHandler = async (
 
     try {
       await email_transporter.sendMail({
-        from: process.env.EMAIL_FROM,
+        from: process.env.GOOGLE_APP_EMAIL_FROM,
         to: user.email,
-        subject: "⚠️ Action Required: Connect Your Payment Method",
+        subject: "Payment Method Required to Process Your Payment",
         html: emailHTML,
       });
 
@@ -1501,9 +1428,9 @@ export const sendPaymentMethodReminders: RequestHandler = async (
 
       try {
         await email_transporter.sendMail({
-          from: process.env.EMAIL_FROM,
+          from: process.env.GOOGLE_APP_EMAIL_FROM,
           to: user.email,
-          subject: "⚠️ Action Required: Connect Your Payment Method",
+          subject: "Payment Method Required to Process Your Payment",
           html: emailHTML,
         });
 
@@ -1548,3 +1475,399 @@ function calculateAge(dateOfBirth: string) {
 
   return age;
 }
+
+export const createAnnotator: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { username, password, annotation_recordings, email } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({
+        error: "Username and password are required",
+      });
+    }
+
+    if (!validateEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "Email that you provided is not valid",
+      });
+    }
+
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [{ username: username }, { email: email }],
+      },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        error: "user with email or username already exists",
+      });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const annotator = await prisma.user.create({
+      data: {
+        username,
+        password: hashedPassword,
+        email: email,
+        user_type: "user",
+        verified: true,
+        is_annotator: true,
+        email_verified: true,
+        adminVerify: "active",
+        annotation_recordings: annotation_recordings || [],
+      },
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Annotator created successfully",
+      annotator: {
+        id: annotator.id,
+        username: annotator.username,
+        annotation_recordings: annotator.annotation_recordings,
+      },
+    });
+  } catch (err) {
+    logger.error(`Error creating annotator: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const listAnnotators: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const annotators = await prisma.user.findMany({
+      where: {
+        is_annotator: true,
+      },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        annotation_recordings: true,
+        createdAt: true,
+        adminVerify: true,
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    return res.status(200).json({ annotators });
+  } catch (err) {
+    logger.error(`Error listing annotators: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const updateAnnotatorFolders: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { annotatorId } = req.params;
+    const { annotation_recordings } = req.body;
+
+    const annotator = await prisma.user.update({
+      where: {
+        id: parseInt(annotatorId),
+        is_annotator: true,
+      },
+      data: {
+        annotation_recordings: annotation_recordings,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Annotator folders updated",
+      annotator: {
+        id: annotator.id,
+        username: annotator.username,
+        annotation_recordings: annotator.annotation_recordings,
+      },
+    });
+  } catch (err) {
+    logger.error(`Error updating annotator: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const deleteAnnotator: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { annotatorId } = req.params;
+
+    await prisma.user.delete({
+      where: {
+        id: parseInt(annotatorId),
+        is_annotator: true,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Annotator deleted successfully",
+    });
+  } catch (err) {
+    logger.error(`Error deleting annotator: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const assignRecordingsToAnnotators: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { recordingsPerAnnotator = 25 } = req.body;
+
+    const annotators = await prisma.user.findMany({
+      where: { is_annotator: true },
+      select: {
+        id: true,
+        username: true,
+        annotation_recordings: true,
+      },
+    });
+
+    if (annotators.length === 0) {
+      return res.status(404).json({
+        error: "No annotators found in the system",
+      });
+    }
+
+    const allDatesCommand = new ListObjectsV2Command({
+      Bucket: BUCKET_NAME,
+      Prefix: "Arabic/",
+      Delimiter: "/",
+    });
+
+    const allDatesResponse = await s3.send(allDatesCommand);
+    const allDates =
+      allDatesResponse.CommonPrefixes?.map((prefix) => ({
+        name: prefix.Prefix?.replace("Arabic/", "").replace("/", ""),
+        path: prefix.Prefix,
+      })) || [];
+
+    allDates.sort((a, b) => b.name.localeCompare(a.name));
+    const last10Dates = allDates.slice(0, 10);
+
+    const allUnannotatedRecordings: string[] = [];
+
+    for (const dateFolder of last10Dates) {
+      const timeFoldersCommand = new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: dateFolder.path,
+        Delimiter: "/",
+      });
+
+      const timeFoldersResponse = await s3.send(timeFoldersCommand);
+      const timeFolders = timeFoldersResponse.CommonPrefixes || [];
+
+      for (const timePrefix of timeFolders) {
+        const recordingsCommand = new ListObjectsV2Command({
+          Bucket: BUCKET_NAME,
+          Prefix: timePrefix.Prefix,
+          Delimiter: "/",
+        });
+
+        const recordingsResponse = await s3.send(recordingsCommand);
+        const recordingFolders = recordingsResponse.CommonPrefixes || [];
+
+        for (const recordingPrefix of recordingFolders) {
+          const filesCommand = new ListObjectsV2Command({
+            Bucket: BUCKET_NAME,
+            Prefix: recordingPrefix.Prefix,
+          });
+
+          const filesResponse = await s3.send(filesCommand);
+          const hasAnnotation = filesResponse.Contents?.some((file) =>
+            file.Key?.endsWith("human_transcript.txt")
+          );
+
+          if (!hasAnnotation && recordingPrefix.Prefix) {
+            allUnannotatedRecordings.push(recordingPrefix.Prefix);
+          }
+        }
+      }
+    }
+
+    if (allUnannotatedRecordings.length === 0) {
+      return res.status(404).json({
+        error: "No unannotated recordings found in the last 10 days",
+      });
+    }
+
+    const totalNeeded = annotators.length * recordingsPerAnnotator;
+    if (allUnannotatedRecordings.length < totalNeeded) {
+      return res.status(400).json({
+        error: `Not enough recordings. Need ${totalNeeded}, but only ${allUnannotatedRecordings.length} available`,
+        suggestion: `Consider reducing recordings per annotator or the number of annotators`,
+      });
+    }
+
+    const shuffledRecordings = allUnannotatedRecordings.sort(
+      () => Math.random() - 0.5
+    );
+
+    const assignments: Array<{
+      annotatorId: number;
+      username: string;
+      assignedRecordings: string[];
+      previousCount: number;
+      newCount: number;
+    }> = [];
+
+    let currentIndex = 0;
+
+    for (const annotator of annotators) {
+      const previousCount = annotator.annotation_recordings?.length || 0;
+
+      const assignedRecordings = shuffledRecordings.slice(
+        currentIndex,
+        currentIndex + recordingsPerAnnotator
+      );
+
+      currentIndex += recordingsPerAnnotator;
+
+      const existingRecordings = annotator.annotation_recordings || [];
+      const combinedRecordings = [
+        ...new Set([...existingRecordings, ...assignedRecordings]),
+      ];
+
+      await prisma.user.update({
+        where: { id: annotator.id },
+        data: {
+          annotation_recordings: combinedRecordings,
+        },
+      });
+
+      assignments.push({
+        annotatorId: annotator.id,
+        username: annotator.username,
+        assignedRecordings,
+        previousCount,
+        newCount: combinedRecordings.length,
+      });
+
+      logger.info(
+        `Assigned ${assignedRecordings.length} recordings to ${annotator.username}`
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Recordings assigned successfully",
+      summary: {
+        totalAnnotators: annotators.length,
+        totalRecordingsAvailable: allUnannotatedRecordings.length,
+        recordingsPerAnnotator,
+        totalAssigned: currentIndex,
+      },
+      assignments,
+    });
+  } catch (err) {
+    logger.error(`Error assigning recordings: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const clearAllAssignments: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const result = await prisma.user.updateMany({
+      where: { is_annotator: true },
+      data: {
+        annotation_recordings: [],
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Cleared assignments for ${result.count} annotators`,
+    });
+  } catch (err) {
+    logger.error(`Error clearing assignments: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const getAssignmentStats: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const annotators = await prisma.user.findMany({
+      where: { is_annotator: true },
+      select: {
+        id: true,
+        username: true,
+        annotation_recordings: true,
+      },
+    });
+
+    const stats = annotators.map((annotator) => ({
+      id: annotator.id,
+      username: annotator.username,
+      totalAssigned: annotator.annotation_recordings?.length || 0,
+      recordings: annotator.annotation_recordings || [],
+    }));
+
+    const totalAssigned = stats.reduce(
+      (sum, stat) => sum + stat.totalAssigned,
+      0
+    );
+
+    return res.status(200).json({
+      totalAnnotators: annotators.length,
+      totalAssigned,
+      averagePerAnnotator:
+        annotators.length > 0 ? totalAssigned / annotators.length : 0,
+      annotators: stats,
+    });
+  } catch (err) {
+    logger.error(`Error getting assignment stats: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};

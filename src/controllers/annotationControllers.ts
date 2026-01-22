@@ -13,10 +13,324 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { s3 } from "../config/aws_s3";
+import jwt_decode from "jwt-decode";
 
 dotenv.config();
 
 const BUCKET_NAME = process.env.S3_BUCKET_NAME;
+
+export const login: RequestHandler = async (req: Request, res: Response) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid inputs" });
+    }
+
+    let user = await prisma.user.findFirst({
+      where: { username: username },
+    });
+
+    if (!user || !user.is_annotator) {
+      return res.status(400).json({
+        success: false,
+        message: "User is not authorized",
+      });
+    }
+
+    const isValid = await bcrypt.compare(password, user.password);
+
+    if (!isValid) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid password",
+      });
+    }
+
+    await sendTokenCookie(res, user.username);
+
+    return res.status(200).json({
+      success: true,
+      message: "Logged in successfully",
+    });
+  } catch (err) {
+    logger.error(`Error in login: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const getFirstRecordingForUser: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { language } = req.params;
+    const token = req.cookies.authToken;
+
+    if (!token) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exist" });
+    }
+
+    const { username }: { username: string } = jwt_decode(token);
+    const user = await prisma.user.findFirst({ where: { username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exist" });
+    }
+
+    if (
+      !user?.annotation_recordings ||
+      user.annotation_recordings.length === 0
+    ) {
+      return res.status(404).json({
+        error: "No recordings assigned to this user",
+      });
+    }
+
+    for (const recordingPath of user.annotation_recordings) {
+      const filesCommand = new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: recordingPath,
+      });
+
+      const filesResponse = await s3.send(filesCommand);
+      const hasAnnotation = filesResponse.Contents?.some((file) =>
+        file.Key?.endsWith("human_transcript.txt")
+      );
+
+      if (!hasAnnotation) {
+        const pathParts = recordingPath.split("/").filter((p) => p);
+
+        return res.status(200).json({
+          dateFolder: pathParts[1],
+          timeFolder: pathParts[2],
+          recording: pathParts[3],
+          hasRecording: true,
+        });
+      }
+    }
+
+    return res.status(200).json({
+      hasRecording: false,
+      message:
+        "No unannotated recordings available in your assigned recordings",
+    });
+  } catch (err) {
+    logger.error(`Error getting first recording: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const getNextAvailableRecording: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const {
+      language,
+      currentDateFolder,
+      currentTimeFolder,
+      currentRecordingId,
+    } = req.params;
+    const token = req.cookies.authToken;
+
+    if (!token) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exist" });
+    }
+
+    const { username }: { username: string } = jwt_decode(token);
+    const user = await prisma.user.findFirst({ where: { username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exist" });
+    }
+
+    if (
+      !user?.annotation_recordings ||
+      user.annotation_recordings.length === 0
+    ) {
+      return res.status(404).json({ error: "No recordings assigned" });
+    }
+
+    const isFirstRequest = !currentDateFolder || currentDateFolder === "none";
+    const decodedCurrentDate = !isFirstRequest
+      ? decodeURIComponent(currentDateFolder)
+      : null;
+    const decodedCurrentTime = !isFirstRequest
+      ? decodeURIComponent(currentTimeFolder)
+      : null;
+    const decodedCurrentRecording = !isFirstRequest
+      ? decodeURIComponent(currentRecordingId)
+      : null;
+
+    let foundCurrent = isFirstRequest;
+
+    for (const recordingPath of user.annotation_recordings) {
+      const pathParts = recordingPath.split("/").filter((p) => p);
+      const dateFolder = pathParts[1];
+      const timeFolder = pathParts[2];
+      const recording = pathParts[3];
+
+      if (!foundCurrent) {
+        if (
+          dateFolder === decodedCurrentDate &&
+          timeFolder === decodedCurrentTime &&
+          recording === decodedCurrentRecording
+        ) {
+          foundCurrent = true;
+        }
+        continue;
+      }
+
+      const filesCommand = new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: recordingPath,
+      });
+
+      const filesResponse = await s3.send(filesCommand);
+      const hasAnnotation = filesResponse.Contents?.some((file) =>
+        file.Key?.endsWith("human_transcript.txt")
+      );
+
+      if (!hasAnnotation) {
+        return res.status(200).json({
+          dateFolder,
+          timeFolder,
+          recording,
+          hasNext: true,
+        });
+      }
+    }
+
+    return res.status(200).json({
+      hasNext: false,
+      message: "No more recordings available in your assigned recordings",
+    });
+  } catch (err) {
+    logger.error(`Error getting next recording: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const getPreviousAvailableRecording: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const {
+      language,
+      currentDateFolder,
+      currentTimeFolder,
+      currentRecordingId,
+    } = req.params;
+    const token = req.cookies.authToken;
+
+    if (!token) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exist" });
+    }
+
+    const { username }: { username: string } = jwt_decode(token);
+    const user = await prisma.user.findFirst({ where: { username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exist" });
+    }
+
+    if (!user?.annotation_recordings) {
+      return res.status(404).json({ error: "No recordings assigned" });
+    }
+
+    const decodedCurrentDate = decodeURIComponent(currentDateFolder);
+    const decodedCurrentTime = decodeURIComponent(currentTimeFolder);
+    const decodedCurrentRecording = decodeURIComponent(currentRecordingId);
+
+    const allUnannotatedRecordings: Array<{
+      dateFolder: string;
+      timeFolder: string;
+      recording: string;
+    }> = [];
+
+    for (const recordingPath of user.annotation_recordings) {
+      const pathParts = recordingPath.split("/").filter((p) => p);
+      const dateFolder = pathParts[1];
+      const timeFolder = pathParts[2];
+      const recording = pathParts[3];
+
+      const filesCommand = new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: recordingPath,
+      });
+
+      const filesResponse = await s3.send(filesCommand);
+      const hasAnnotation = filesResponse.Contents?.some((file) =>
+        file.Key?.endsWith("human_transcript.txt")
+      );
+
+      if (!hasAnnotation) {
+        allUnannotatedRecordings.push({
+          dateFolder,
+          timeFolder,
+          recording,
+        });
+      }
+    }
+
+    const currentIndex = allUnannotatedRecordings.findIndex(
+      (rec) =>
+        rec.dateFolder === decodedCurrentDate &&
+        rec.timeFolder === decodedCurrentTime &&
+        rec.recording === decodedCurrentRecording
+    );
+
+    if (currentIndex > 0) {
+      const previousRecording = allUnannotatedRecordings[currentIndex - 1];
+      return res.status(200).json({
+        dateFolder: previousRecording.dateFolder,
+        timeFolder: previousRecording.timeFolder,
+        recording: previousRecording.recording,
+        hasPrevious: true,
+      });
+    }
+
+    return res.status(200).json({
+      hasPrevious: false,
+      message: "This is the first recording",
+    });
+  } catch (err) {
+    logger.error(`Error getting previous recording: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
 
 export const listLanguages: RequestHandler = async (
   req: Request,
@@ -355,222 +669,6 @@ export const uploadAnnotationFile: RequestHandler = async (
       .json({ success: true, message: "Annotation uploaded successfully" });
   } catch (err) {
     logger.error(`Error in uploading annotation file: ${err}`);
-    if (!res.headersSent) {
-      return internalServerError(res);
-    }
-  } finally {
-    await prisma.$disconnect();
-  }
-};
-
-export const getNextAvailableRecording: RequestHandler = async (
-  req: Request,
-  res: Response
-) => {
-  try {
-    const { language, dateFolder, currentTimeFolder, currentRecordingId } =
-      req.params;
-
-    const isFirstRequest =
-      !currentTimeFolder ||
-      currentTimeFolder === "none" ||
-      currentTimeFolder === "null" ||
-      !currentRecordingId ||
-      currentRecordingId === "none" ||
-      currentRecordingId === "null";
-
-    const decodedCurrentTime =
-      !isFirstRequest && currentTimeFolder
-        ? decodeURIComponent(currentTimeFolder)
-        : null;
-
-    const decodedCurrentRecording =
-      !isFirstRequest && currentRecordingId
-        ? decodeURIComponent(currentRecordingId)
-        : null;
-
-    const timeFoldersCommand = new ListObjectsV2Command({
-      Bucket: BUCKET_NAME,
-      Prefix: `${language}/${dateFolder}/`,
-      Delimiter: "/",
-    });
-
-    const timeFoldersResponse = await s3.send(timeFoldersCommand);
-    const timeFolders = (timeFoldersResponse.CommonPrefixes || [])
-      .map((prefix) => ({
-        name: prefix.Prefix.replace(`${language}/${dateFolder}/`, "").replace(
-          "/",
-          ""
-        ),
-        path: prefix.Prefix,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-    let startSearching = isFirstRequest;
-
-    for (const timeFolder of timeFolders) {
-      if (!startSearching) {
-        if (timeFolder.name === decodedCurrentTime) {
-          startSearching = true;
-        } else {
-          continue;
-        }
-      }
-
-      const recordingsCommand = new ListObjectsV2Command({
-        Bucket: BUCKET_NAME,
-        Prefix: timeFolder.path,
-        Delimiter: "/",
-      });
-
-      const recordingsResponse = await s3.send(recordingsCommand);
-      const recordings = (recordingsResponse.CommonPrefixes || [])
-        .map((prefix) => ({
-          name: prefix.Prefix.replace(timeFolder.path, "").replace("/", ""),
-          path: prefix.Prefix,
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name));
-
-      console.log(
-        `Found ${recordings.length} recordings in ${timeFolder.name}`
-      );
-
-      let shouldSkipCurrent =
-        !isFirstRequest && timeFolder.name === decodedCurrentTime;
-
-      for (const recording of recordings) {
-        if (shouldSkipCurrent && recording.name === decodedCurrentRecording) {
-          shouldSkipCurrent = false;
-          continue;
-        }
-
-        const filesCommand = new ListObjectsV2Command({
-          Bucket: BUCKET_NAME,
-          Prefix: recording.path,
-        });
-
-        const filesResponse = await s3.send(filesCommand);
-        const files = filesResponse.Contents || [];
-
-        const hasAnnotation = files.some((file) =>
-          file.Key?.endsWith("human_transcript.txt")
-        );
-
-        if (!hasAnnotation) {
-          return res.status(200).json({
-            timeFolder: timeFolder.name,
-            recording: recording.name,
-            hasNext: true,
-          });
-        }
-      }
-    }
-
-    return res.status(200).json({
-      hasNext: false,
-      message: "No more recordings available for annotation in this date",
-    });
-  } catch (err) {
-    logger.error(`Error in getting next available recording: ${err}`);
-    if (!res.headersSent) {
-      return internalServerError(res);
-    }
-  } finally {
-    await prisma.$disconnect();
-  }
-};
-
-export const getPreviousAvailableRecording: RequestHandler = async (
-  req: Request,
-  res: Response
-) => {
-  try {
-    const { language, dateFolder, currentTimeFolder, currentRecordingId } =
-      req.params;
-
-    const decodedCurrentTime = decodeURIComponent(currentTimeFolder);
-    const decodedCurrentRecording = decodeURIComponent(currentRecordingId);
-
-    const timeFoldersCommand = new ListObjectsV2Command({
-      Bucket: BUCKET_NAME,
-      Prefix: `${language}/${dateFolder}/`,
-      Delimiter: "/",
-    });
-
-    const timeFoldersResponse = await s3.send(timeFoldersCommand);
-    const timeFolders = (timeFoldersResponse.CommonPrefixes || [])
-      .map((prefix) => ({
-        name: prefix.Prefix.replace(`${language}/${dateFolder}/`, "").replace(
-          "/",
-          ""
-        ),
-        path: prefix.Prefix,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-
-    const allUnannotatedRecordings: Array<{
-      timeFolder: string;
-      recording: string;
-    }> = [];
-
-    for (const timeFolder of timeFolders) {
-      const recordingsCommand = new ListObjectsV2Command({
-        Bucket: BUCKET_NAME,
-        Prefix: timeFolder.path,
-        Delimiter: "/",
-      });
-
-      const recordingsResponse = await s3.send(recordingsCommand);
-      const recordings = (recordingsResponse.CommonPrefixes || [])
-        .map((prefix) => ({
-          name: prefix.Prefix.replace(timeFolder.path, "").replace("/", ""),
-          path: prefix.Prefix,
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name));
-
-      for (const recording of recordings) {
-        const filesCommand = new ListObjectsV2Command({
-          Bucket: BUCKET_NAME,
-          Prefix: recording.path,
-        });
-
-        const filesResponse = await s3.send(filesCommand);
-        const files = filesResponse.Contents || [];
-
-        const hasAnnotation = files.some((file) =>
-          file.Key?.endsWith("human_transcript.txt")
-        );
-
-        if (!hasAnnotation) {
-          allUnannotatedRecordings.push({
-            timeFolder: timeFolder.name,
-            recording: recording.name,
-          });
-        }
-      }
-    }
-
-    const currentIndex = allUnannotatedRecordings.findIndex(
-      (rec) =>
-        rec.timeFolder === decodedCurrentTime &&
-        rec.recording === decodedCurrentRecording
-    );
-
-    if (currentIndex > 0) {
-      const previousRecording = allUnannotatedRecordings[currentIndex - 1];
-      return res.status(200).json({
-        timeFolder: previousRecording.timeFolder,
-        recording: previousRecording.recording,
-        hasPrevious: true,
-      });
-    }
-
-    return res.status(200).json({
-      hasPrevious: false,
-      message: "This is the first recording",
-    });
-  } catch (err) {
-    logger.error(`Error in getting previous available recording: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }
