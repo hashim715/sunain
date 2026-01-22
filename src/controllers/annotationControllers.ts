@@ -65,76 +65,6 @@ export const login: RequestHandler = async (req: Request, res: Response) => {
   }
 };
 
-export const getFirstRecordingForUser: RequestHandler = async (
-  req: Request,
-  res: Response
-) => {
-  try {
-    const { language } = req.params;
-    const token = req.cookies.authToken;
-
-    if (!token) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User does not exist" });
-    }
-
-    const { username }: { username: string } = jwt_decode(token);
-    const user = await prisma.user.findFirst({ where: { username } });
-
-    if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User does not exist" });
-    }
-
-    if (
-      !user?.annotation_recordings ||
-      user.annotation_recordings.length === 0
-    ) {
-      return res.status(404).json({
-        error: "No recordings assigned to this user",
-      });
-    }
-
-    for (const recordingPath of user.annotation_recordings) {
-      const filesCommand = new ListObjectsV2Command({
-        Bucket: BUCKET_NAME,
-        Prefix: recordingPath,
-      });
-
-      const filesResponse = await s3.send(filesCommand);
-      const hasAnnotation = filesResponse.Contents?.some((file) =>
-        file.Key?.endsWith("human_transcript.txt")
-      );
-
-      if (!hasAnnotation) {
-        const pathParts = recordingPath.split("/").filter((p) => p);
-
-        return res.status(200).json({
-          dateFolder: pathParts[1],
-          timeFolder: pathParts[2],
-          recording: pathParts[3],
-          hasRecording: true,
-        });
-      }
-    }
-
-    return res.status(200).json({
-      hasRecording: false,
-      message:
-        "No unannotated recordings available in your assigned recordings",
-    });
-  } catch (err) {
-    logger.error(`Error getting first recording: ${err}`);
-    if (!res.headersSent) {
-      return internalServerError(res);
-    }
-  } finally {
-    await prisma.$disconnect();
-  }
-};
-
 export const getNextAvailableRecording: RequestHandler = async (
   req: Request,
   res: Response
@@ -157,72 +87,39 @@ export const getNextAvailableRecording: RequestHandler = async (
     const { username }: { username: string } = jwt_decode(token);
     const user = await prisma.user.findFirst({ where: { username } });
 
-    if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User does not exist" });
-    }
-
     if (
-      !user?.annotation_recordings ||
+      !user ||
+      !user.annotation_recordings ||
       user.annotation_recordings.length === 0
     ) {
       return res.status(404).json({ error: "No recordings assigned" });
     }
 
-    const isFirstRequest = !currentDateFolder || currentDateFolder === "none";
-    const decodedCurrentDate = !isFirstRequest
-      ? decodeURIComponent(currentDateFolder)
-      : null;
-    const decodedCurrentTime = !isFirstRequest
-      ? decodeURIComponent(currentTimeFolder)
-      : null;
-    const decodedCurrentRecording = !isFirstRequest
-      ? decodeURIComponent(currentRecordingId)
-      : null;
+    const currentPath = `${language}/${currentDateFolder}/${currentTimeFolder}/${currentRecordingId}/`;
 
-    let foundCurrent = isFirstRequest;
+    console.log(currentDateFolder, currentTimeFolder, currentRecordingId);
 
-    for (const recordingPath of user.annotation_recordings) {
-      const pathParts = recordingPath.split("/").filter((p) => p);
-      const dateFolder = pathParts[1];
-      const timeFolder = pathParts[2];
-      const recording = pathParts[3];
+    const currentIndex = user.annotation_recordings.findIndex(
+      (path) => path === currentPath
+    );
 
-      if (!foundCurrent) {
-        if (
-          dateFolder === decodedCurrentDate &&
-          timeFolder === decodedCurrentTime &&
-          recording === decodedCurrentRecording
-        ) {
-          foundCurrent = true;
-        }
-        continue;
-      }
+    const nextIndex = currentIndex + 1;
 
-      const filesCommand = new ListObjectsV2Command({
-        Bucket: BUCKET_NAME,
-        Prefix: recordingPath,
+    if (nextIndex >= user.annotation_recordings.length) {
+      return res.status(200).json({
+        hasNext: false,
+        message: "No more recordings available",
       });
-
-      const filesResponse = await s3.send(filesCommand);
-      const hasAnnotation = filesResponse.Contents?.some((file) =>
-        file.Key?.endsWith("human_transcript.txt")
-      );
-
-      if (!hasAnnotation) {
-        return res.status(200).json({
-          dateFolder,
-          timeFolder,
-          recording,
-          hasNext: true,
-        });
-      }
     }
 
+    const nextRecordingPath = user.annotation_recordings[nextIndex];
+    const pathParts = nextRecordingPath.split("/").filter((p) => p);
+
     return res.status(200).json({
-      hasNext: false,
-      message: "No more recordings available in your assigned recordings",
+      dateFolder: pathParts[1],
+      timeFolder: pathParts[2],
+      recording: pathParts[3],
+      hasNext: true,
     });
   } catch (err) {
     logger.error(`Error getting next recording: ${err}`);
@@ -256,74 +153,87 @@ export const getPreviousAvailableRecording: RequestHandler = async (
     const { username }: { username: string } = jwt_decode(token);
     const user = await prisma.user.findFirst({ where: { username } });
 
-    if (!user) {
+    if (!user || !user.annotation_recordings) {
+      return res.status(404).json({ error: "No recordings assigned" });
+    }
+
+    // Build current recording path
+    const currentPath = `${language}/${currentDateFolder}/${currentTimeFolder}/${currentRecordingId}/`;
+
+    // Find current recording index
+    const currentIndex = user.annotation_recordings.findIndex(
+      (path) => path === currentPath
+    );
+
+    // Get previous index
+    const previousIndex = currentIndex - 1;
+
+    // Check if there's a previous recording
+    if (previousIndex < 0) {
+      return res.status(200).json({
+        hasPrevious: false,
+        message: "This is the first recording",
+      });
+    }
+
+    // Get previous recording path
+    const previousRecordingPath = user.annotation_recordings[previousIndex];
+    const pathParts = previousRecordingPath.split("/").filter((p) => p);
+
+    return res.status(200).json({
+      dateFolder: pathParts[1],
+      timeFolder: pathParts[2],
+      recording: pathParts[3],
+      hasPrevious: true,
+    });
+  } catch (err) {
+    logger.error(`Error getting previous recording: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const getFirstRecordingForUser: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { language } = req.params;
+    const token = req.cookies.authToken;
+
+    if (!token) {
       return res
         .status(404)
         .json({ success: false, message: "User does not exist" });
     }
 
-    if (!user?.annotation_recordings) {
-      return res.status(404).json({ error: "No recordings assigned" });
-    }
+    const { username }: { username: string } = jwt_decode(token);
+    const user = await prisma.user.findFirst({ where: { username } });
 
-    const decodedCurrentDate = decodeURIComponent(currentDateFolder);
-    const decodedCurrentTime = decodeURIComponent(currentTimeFolder);
-    const decodedCurrentRecording = decodeURIComponent(currentRecordingId);
-
-    const allUnannotatedRecordings: Array<{
-      dateFolder: string;
-      timeFolder: string;
-      recording: string;
-    }> = [];
-
-    for (const recordingPath of user.annotation_recordings) {
-      const pathParts = recordingPath.split("/").filter((p) => p);
-      const dateFolder = pathParts[1];
-      const timeFolder = pathParts[2];
-      const recording = pathParts[3];
-
-      const filesCommand = new ListObjectsV2Command({
-        Bucket: BUCKET_NAME,
-        Prefix: recordingPath,
-      });
-
-      const filesResponse = await s3.send(filesCommand);
-      const hasAnnotation = filesResponse.Contents?.some((file) =>
-        file.Key?.endsWith("human_transcript.txt")
-      );
-
-      if (!hasAnnotation) {
-        allUnannotatedRecordings.push({
-          dateFolder,
-          timeFolder,
-          recording,
-        });
-      }
-    }
-
-    const currentIndex = allUnannotatedRecordings.findIndex(
-      (rec) =>
-        rec.dateFolder === decodedCurrentDate &&
-        rec.timeFolder === decodedCurrentTime &&
-        rec.recording === decodedCurrentRecording
-    );
-
-    if (currentIndex > 0) {
-      const previousRecording = allUnannotatedRecordings[currentIndex - 1];
-      return res.status(200).json({
-        dateFolder: previousRecording.dateFolder,
-        timeFolder: previousRecording.timeFolder,
-        recording: previousRecording.recording,
-        hasPrevious: true,
+    if (
+      !user ||
+      !user.annotation_recordings ||
+      user.annotation_recordings.length === 0
+    ) {
+      return res.status(404).json({
+        error: "No recordings assigned to this user",
       });
     }
+
+    const firstRecordingPath = user.annotation_recordings[0];
+    const pathParts = firstRecordingPath.split("/").filter((p) => p);
 
     return res.status(200).json({
-      hasPrevious: false,
-      message: "This is the first recording",
+      dateFolder: pathParts[1],
+      timeFolder: pathParts[2],
+      recording: pathParts[3],
+      hasRecording: true,
     });
   } catch (err) {
-    logger.error(`Error getting previous recording: ${err}`);
+    logger.error(`Error getting first recording: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }
@@ -669,6 +579,62 @@ export const uploadAnnotationFile: RequestHandler = async (
       .json({ success: true, message: "Annotation uploaded successfully" });
   } catch (err) {
     logger.error(`Error in uploading annotation file: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const removeRecordingFromAnnotator: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { recordingPath } = req.body;
+    const token = req.cookies.authToken;
+
+    if (!token) {
+      return res
+        .status(401)
+        .json({ success: false, message: "User does not exist" });
+    }
+
+    if (!recordingPath) {
+      return res.status(400).json({
+        success: false,
+        message: "Recording path is required",
+      });
+    }
+
+    const { username }: { username: string } = jwt_decode(token);
+    const user = await prisma.user.findFirst({ where: { username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exist" });
+    }
+
+    const updatedRecordings = (user.annotation_recordings || []).filter(
+      (path) => path !== recordingPath
+    );
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        annotation_recordings: updatedRecordings,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Recording removed from annotator's list",
+      remainingRecordings: updatedRecordings.length,
+    });
+  } catch (err) {
+    logger.error(`Error removing recording from annotator: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }

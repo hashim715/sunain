@@ -11,6 +11,7 @@ import {
   getPreviousAvailableRecording,
   getFirstRecordingForUser,
   login,
+  removeRecordingFromAnnotator,
 } from "../controllers/annotationControllers";
 
 export const annotationRouter: Router = express.Router();
@@ -36,14 +37,13 @@ annotationRouter
   )
   .get(getRecordingFilesPlusAnnotated);
 
-annotationRouter
-  .route(
-    "/nextRecording/:language/:dateFolder/:currentTimeFolder/:currentRecordingId"
-  )
-  .get(getNextAvailableRecording);
+annotationRouter.get(
+  "/nextRecording/:language/:currentDateFolder/:currentTimeFolder/:currentRecordingId",
+  getNextAvailableRecording
+);
 
 annotationRouter.get(
-  "/previousRecording/:language/:dateFolder/:currentTimeFolder/:currentRecordingId",
+  "/previousRecording/:language/:currentDateFolder/:currentTimeFolder/:currentRecordingId",
   getPreviousAvailableRecording
 );
 
@@ -52,3 +52,8 @@ annotationRouter
   .get(getFirstRecordingForUser);
 
 annotationRouter.route("/uploadAnnotationFile").post(uploadAnnotationFile);
+
+annotationRouter.post(
+  "/removeRecordingFromAnnotator",
+  removeRecordingFromAnnotator
+);

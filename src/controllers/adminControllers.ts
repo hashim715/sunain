@@ -1641,15 +1641,24 @@ export const deleteAnnotator: RequestHandler = async (
   }
 };
 
-export const assignRecordingsToAnnotators: RequestHandler = async (
+export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
   req: Request,
   res: Response
 ) => {
   try {
-    const { recordingsPerAnnotator = 25 } = req.body;
+    const { annotatorId, recordingsPerAnnotator = 25 } = req.body;
 
-    const annotators = await prisma.user.findMany({
-      where: { is_annotator: true },
+    if (!annotatorId) {
+      return res.status(400).json({
+        error: "Annotator ID is required",
+      });
+    }
+
+    const annotator = await prisma.user.findUnique({
+      where: {
+        id: annotatorId,
+        is_annotator: true,
+      },
       select: {
         id: true,
         username: true,
@@ -1657,11 +1666,29 @@ export const assignRecordingsToAnnotators: RequestHandler = async (
       },
     });
 
-    if (annotators.length === 0) {
+    if (!annotator) {
       return res.status(404).json({
-        error: "No annotators found in the system",
+        error: "Annotator not found or user is not an annotator",
       });
     }
+
+    const allAnnotators = await prisma.user.findMany({
+      where: { is_annotator: true },
+      select: {
+        annotation_recordings: true,
+      },
+    });
+
+    const alreadyAssignedRecordings = new Set<string>();
+    allAnnotators.forEach((ann) => {
+      ann.annotation_recordings?.forEach((recording) => {
+        alreadyAssignedRecordings.add(recording);
+      });
+    });
+
+    logger.info(
+      `Found ${alreadyAssignedRecordings.size} already assigned recordings across all annotators`
+    );
 
     const allDatesCommand = new ListObjectsV2Command({
       Bucket: BUCKET_NAME,
@@ -1679,7 +1706,7 @@ export const assignRecordingsToAnnotators: RequestHandler = async (
     allDates.sort((a, b) => b.name.localeCompare(a.name));
     const last10Dates = allDates.slice(0, 10);
 
-    const allUnannotatedRecordings: string[] = [];
+    const availableRecordings: string[] = [];
 
     for (const dateFolder of last10Dates) {
       const timeFoldersCommand = new ListObjectsV2Command({
@@ -1702,6 +1729,12 @@ export const assignRecordingsToAnnotators: RequestHandler = async (
         const recordingFolders = recordingsResponse.CommonPrefixes || [];
 
         for (const recordingPrefix of recordingFolders) {
+          if (!recordingPrefix.Prefix) continue;
+
+          if (alreadyAssignedRecordings.has(recordingPrefix.Prefix)) {
+            continue;
+          }
+
           const filesCommand = new ListObjectsV2Command({
             Bucket: BUCKET_NAME,
             Prefix: recordingPrefix.Prefix,
@@ -1712,89 +1745,126 @@ export const assignRecordingsToAnnotators: RequestHandler = async (
             file.Key?.endsWith("human_transcript.txt")
           );
 
-          if (!hasAnnotation && recordingPrefix.Prefix) {
-            allUnannotatedRecordings.push(recordingPrefix.Prefix);
+          if (!hasAnnotation) {
+            availableRecordings.push(recordingPrefix.Prefix);
           }
         }
       }
     }
 
-    if (allUnannotatedRecordings.length === 0) {
+    if (availableRecordings.length === 0) {
       return res.status(404).json({
-        error: "No unannotated recordings found in the last 10 days",
+        error: "No available unassigned recordings found in the last 10 days",
+        info: `All recordings are either annotated or already assigned to annotators`,
       });
     }
 
-    const totalNeeded = annotators.length * recordingsPerAnnotator;
-    if (allUnannotatedRecordings.length < totalNeeded) {
+    if (availableRecordings.length < recordingsPerAnnotator) {
       return res.status(400).json({
-        error: `Not enough recordings. Need ${totalNeeded}, but only ${allUnannotatedRecordings.length} available`,
-        suggestion: `Consider reducing recordings per annotator or the number of annotators`,
+        error: `Not enough available recordings. Requested ${recordingsPerAnnotator}, but only ${availableRecordings.length} available`,
+        suggestion: `Consider reducing the number of recordings per annotator`,
+        availableCount: availableRecordings.length,
       });
     }
 
-    const shuffledRecordings = allUnannotatedRecordings.sort(
+    const shuffledRecordings = availableRecordings.sort(
       () => Math.random() - 0.5
     );
+    const newAssignments = shuffledRecordings.slice(0, recordingsPerAnnotator);
 
-    const assignments: Array<{
-      annotatorId: number;
-      username: string;
-      assignedRecordings: string[];
-      previousCount: number;
-      newCount: number;
-    }> = [];
+    const existingRecordings = annotator.annotation_recordings || [];
+    const previousCount = existingRecordings.length;
 
-    let currentIndex = 0;
+    const combinedRecordings = [
+      ...new Set([...existingRecordings, ...newAssignments]),
+    ];
 
-    for (const annotator of annotators) {
-      const previousCount = annotator.annotation_recordings?.length || 0;
-
-      const assignedRecordings = shuffledRecordings.slice(
-        currentIndex,
-        currentIndex + recordingsPerAnnotator
-      );
-
-      currentIndex += recordingsPerAnnotator;
-
-      const existingRecordings = annotator.annotation_recordings || [];
-      const combinedRecordings = [
-        ...new Set([...existingRecordings, ...assignedRecordings]),
-      ];
-
-      await prisma.user.update({
-        where: { id: annotator.id },
-        data: {
-          annotation_recordings: combinedRecordings,
-        },
-      });
-
-      assignments.push({
-        annotatorId: annotator.id,
-        username: annotator.username,
-        assignedRecordings,
-        previousCount,
-        newCount: combinedRecordings.length,
-      });
-
-      logger.info(
-        `Assigned ${assignedRecordings.length} recordings to ${annotator.username}`
-      );
-    }
+    await prisma.user.update({
+      where: { id: annotator.id },
+      data: {
+        annotation_recordings: combinedRecordings,
+      },
+    });
 
     return res.status(200).json({
       success: true,
-      message: "Recordings assigned successfully",
-      summary: {
-        totalAnnotators: annotators.length,
-        totalRecordingsAvailable: allUnannotatedRecordings.length,
-        recordingsPerAnnotator,
-        totalAssigned: currentIndex,
+      message: `Successfully assigned ${newAssignments.length} recordings to ${annotator.username}`,
+      assignment: {
+        annotatorId: annotator.id,
+        username: annotator.username,
+        newAssignments,
+        previousCount,
+        newCount: combinedRecordings.length,
+        addedCount: newAssignments.length,
       },
-      assignments,
+      summary: {
+        totalAvailableRecordings: availableRecordings.length,
+        totalAlreadyAssigned: alreadyAssignedRecordings.size,
+        requestedCount: recordingsPerAnnotator,
+        assignedCount: newAssignments.length,
+      },
     });
   } catch (err) {
-    logger.error(`Error assigning recordings: ${err}`);
+    logger.error(`Error assigning recordings to annotator: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const clearAnnotatorAssignments: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { annotatorId } = req.params;
+
+    if (!annotatorId) {
+      return res.status(400).json({
+        error: "Annotator ID is required",
+      });
+    }
+
+    const annotator = await prisma.user.findUnique({
+      where: {
+        id: parseInt(annotatorId),
+        is_annotator: true,
+      },
+      select: {
+        id: true,
+        username: true,
+        annotation_recordings: true,
+      },
+    });
+
+    if (!annotator) {
+      return res.status(404).json({
+        error: "Annotator not found",
+      });
+    }
+
+    const clearedCount = annotator.annotation_recordings?.length || 0;
+
+    await prisma.user.update({
+      where: { id: annotator.id },
+      data: {
+        annotation_recordings: [],
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Cleared ${clearedCount} assignments from ${annotator.username}`,
+      annotator: {
+        id: annotator.id,
+        username: annotator.username,
+        clearedCount,
+      },
+    });
+  } catch (err) {
+    logger.error(`Error clearing annotator assignments: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }
@@ -1843,27 +1913,194 @@ export const getAssignmentStats: RequestHandler = async (
       },
     });
 
-    const stats = annotators.map((annotator) => ({
-      id: annotator.id,
-      username: annotator.username,
-      totalAssigned: annotator.annotation_recordings?.length || 0,
-      recordings: annotator.annotation_recordings || [],
-    }));
+    const statsPromises = annotators.map(async (annotator) => {
+      let totalDurationSeconds = 0;
+      const recordingPaths = annotator.annotation_recordings || [];
+
+      for (const recordingPath of recordingPaths) {
+        try {
+          const metadataKey = `${recordingPath}metadata.txt`;
+
+          const metadataCommand = new GetObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: metadataKey,
+          });
+
+          const metadataResponse = await s3.send(metadataCommand);
+
+          const metadataContent =
+            await metadataResponse.Body?.transformToString();
+
+          if (metadataContent) {
+            const metadata = JSON.parse(metadataContent);
+
+            if (metadata.total_duration) {
+              totalDurationSeconds += metadata.total_duration;
+            }
+          }
+        } catch (err) {
+          logger.warn(`Could not read metadata for ${recordingPath}: ${err}`);
+        }
+      }
+
+      const totalDurationHours = totalDurationSeconds / 3600;
+
+      return {
+        id: annotator.id,
+        username: annotator.username,
+        totalAssigned: recordingPaths.length,
+        totalDurationSeconds: parseFloat(totalDurationSeconds.toFixed(2)),
+        totalDurationHours: parseFloat(totalDurationHours.toFixed(2)),
+        totalDurationFormatted: formatDuration(totalDurationSeconds),
+        recordings: recordingPaths,
+      };
+    });
+
+    const stats = await Promise.all(statsPromises);
 
     const totalAssigned = stats.reduce(
       (sum, stat) => sum + stat.totalAssigned,
       0
     );
 
+    const totalDurationSeconds = stats.reduce(
+      (sum, stat) => sum + stat.totalDurationSeconds,
+      0
+    );
+
+    const totalDurationHours = totalDurationSeconds / 3600;
+
     return res.status(200).json({
       totalAnnotators: annotators.length,
       totalAssigned,
+      totalDurationSeconds: parseFloat(totalDurationSeconds.toFixed(2)),
+      totalDurationHours: parseFloat(totalDurationHours.toFixed(2)),
+      totalDurationFormatted: formatDuration(totalDurationSeconds),
       averagePerAnnotator:
         annotators.length > 0 ? totalAssigned / annotators.length : 0,
+      averageDurationPerAnnotator:
+        annotators.length > 0
+          ? parseFloat((totalDurationHours / annotators.length).toFixed(2))
+          : 0,
       annotators: stats,
     });
   } catch (err) {
     logger.error(`Error getting assignment stats: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+function formatDuration(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = Math.floor(seconds % 60);
+
+  return `${hours.toString().padStart(2, "0")}:${minutes
+    .toString()
+    .padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+}
+
+export const getAvailableRecordingsCount: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const allAnnotators = await prisma.user.findMany({
+      where: { is_annotator: true },
+      select: {
+        annotation_recordings: true,
+      },
+    });
+
+    const alreadyAssignedRecordings = new Set<string>();
+    allAnnotators.forEach((ann) => {
+      ann.annotation_recordings?.forEach((recording) => {
+        alreadyAssignedRecordings.add(recording);
+      });
+    });
+
+    const allDatesCommand = new ListObjectsV2Command({
+      Bucket: BUCKET_NAME,
+      Prefix: "Arabic/",
+      Delimiter: "/",
+    });
+
+    const allDatesResponse = await s3.send(allDatesCommand);
+    const allDates =
+      allDatesResponse.CommonPrefixes?.map((prefix) => ({
+        name: prefix.Prefix?.replace("Arabic/", "").replace("/", ""),
+        path: prefix.Prefix,
+      })) || [];
+
+    allDates.sort((a, b) => b.name.localeCompare(a.name));
+    const last10Dates = allDates.slice(0, 10);
+
+    let totalRecordings = 0;
+    let annotatedRecordings = 0;
+    let assignedRecordings = alreadyAssignedRecordings.size;
+    let availableRecordings = 0;
+
+    for (const dateFolder of last10Dates) {
+      const timeFoldersCommand = new ListObjectsV2Command({
+        Bucket: BUCKET_NAME,
+        Prefix: dateFolder.path,
+        Delimiter: "/",
+      });
+
+      const timeFoldersResponse = await s3.send(timeFoldersCommand);
+      const timeFolders = timeFoldersResponse.CommonPrefixes || [];
+
+      for (const timePrefix of timeFolders) {
+        const recordingsCommand = new ListObjectsV2Command({
+          Bucket: BUCKET_NAME,
+          Prefix: timePrefix.Prefix,
+          Delimiter: "/",
+        });
+
+        const recordingsResponse = await s3.send(recordingsCommand);
+        const recordingFolders = recordingsResponse.CommonPrefixes || [];
+
+        for (const recordingPrefix of recordingFolders) {
+          if (!recordingPrefix.Prefix) continue;
+
+          totalRecordings++;
+
+          const filesCommand = new ListObjectsV2Command({
+            Bucket: BUCKET_NAME,
+            Prefix: recordingPrefix.Prefix,
+          });
+
+          const filesResponse = await s3.send(filesCommand);
+          const hasAnnotation = filesResponse.Contents?.some((file) =>
+            file.Key?.endsWith("human_transcript.txt")
+          );
+
+          if (hasAnnotation) {
+            annotatedRecordings++;
+          } else if (!alreadyAssignedRecordings.has(recordingPrefix.Prefix)) {
+            availableRecordings++;
+          }
+        }
+      }
+    }
+
+    return res.status(200).json({
+      totalRecordings,
+      annotatedRecordings,
+      assignedRecordings,
+      availableRecordings,
+      dateRange: {
+        from: last10Dates[last10Dates.length - 1]?.name,
+        to: last10Dates[0]?.name,
+        totalDays: last10Dates.length,
+      },
+    });
+  } catch (err) {
+    logger.error(`Error getting available recordings count: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }

@@ -24,9 +24,10 @@ import {
   listAnnotators,
   updateAnnotatorFolders,
   deleteAnnotator,
-  assignRecordingsToAnnotators,
-  clearAllAssignments,
+  assignRecordingsToSpecificAnnotator,
+  clearAnnotatorAssignments,
   getAssignmentStats,
+  clearAllAssignments,
 } from "../controllers/adminControllers";
 import { protectAdmin } from "../middleware/adminMiddleware";
 
@@ -85,7 +86,15 @@ adminRouter
   .route("/annotators/:annotatorId")
   .post(protectAdmin, deleteAnnotator);
 adminRouter
-  .route("/assign-recordings")
-  .post(protectAdmin, assignRecordingsToAnnotators);
-adminRouter.route("/clear-assignments").post(protectAdmin, clearAllAssignments);
+  .route("/assign-recordings-to-annotator")
+  .post(protectAdmin, assignRecordingsToSpecificAnnotator);
+adminRouter
+  .route("/annotators/:annotatorId/assignments")
+  .post(protectAdmin, clearAnnotatorAssignments);
+adminRouter
+  .route("/clear-all-assignments")
+  .post(protectAdmin, clearAllAssignments);
 adminRouter.route("/assignment-stats").get(protectAdmin, getAssignmentStats);
+adminRouter
+  .route("/available-recordings-count")
+  .get(protectAdmin, getAssignmentStats);
