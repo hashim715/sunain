@@ -175,7 +175,9 @@ export const flaggedConversations: RequestHandler = async (
     const conversations = await prisma.conversation.findMany({
       where: {
         flagged_status: true,
-        status: "completed",
+        status: {
+          in: ["incomplete", "completed"],
+        },
         meeting: {
           language: "Arabic",
         },
@@ -338,7 +340,9 @@ export const flaggedConversationsCount: RequestHandler = async (
       where: {
         userId: user.id,
         flagged_status: true,
-        status: "completed",
+        status: {
+          in: ["incomplete", "completed"],
+        },
         meeting: {
           language: "Arabic",
         },
@@ -1673,6 +1677,7 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
       });
     }
 
+    // Get all already assigned recordings
     const allAnnotators = await prisma.user.findMany({
       where: { is_annotator: true },
       select: {
@@ -1680,17 +1685,21 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
       },
     });
 
+    // Normalize paths for comparison (decode URL encoding)
     const alreadyAssignedRecordings = new Set<string>();
     allAnnotators.forEach((ann) => {
       ann.annotation_recordings?.forEach((recording) => {
+        // Store both encoded and decoded versions
         alreadyAssignedRecordings.add(recording);
+        alreadyAssignedRecordings.add(decodeURIComponent(recording));
       });
     });
 
     logger.info(
-      `Found ${alreadyAssignedRecordings.size} already assigned recordings across all annotators`
+      `Found ${alreadyAssignedRecordings.size} already assigned recordings (with variations)`
     );
 
+    // Get all date folders
     const allDatesCommand = new ListObjectsV2Command({
       Bucket: BUCKET_NAME,
       Prefix: "Arabic/",
@@ -1699,20 +1708,17 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
 
     const allDatesResponse = await s3.send(allDatesCommand);
     const allDates =
-      allDatesResponse.CommonPrefixes?.map((prefix) => ({
-        name: prefix.Prefix?.replace("Arabic/", "").replace("/", ""),
-        path: prefix.Prefix,
-      })) || [];
+      allDatesResponse.CommonPrefixes?.map((prefix) => prefix.Prefix) || [];
 
-    allDates.sort((a, b) => b.name.localeCompare(a.name));
-    const last10Dates = allDates.slice(0, 10);
+    logger.info(`Found ${allDates.length} date folders`);
 
     const availableRecordings: string[] = [];
 
-    for (const dateFolder of last10Dates) {
+    // Loop through all dates
+    for (const dateFolder of allDates) {
       const timeFoldersCommand = new ListObjectsV2Command({
         Bucket: BUCKET_NAME,
-        Prefix: dateFolder.path,
+        Prefix: dateFolder,
         Delimiter: "/",
       });
 
@@ -1732,10 +1738,18 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
         for (const recordingPrefix of recordingFolders) {
           if (!recordingPrefix.Prefix) continue;
 
-          if (alreadyAssignedRecordings.has(recordingPrefix.Prefix)) {
+          // Check both encoded and decoded versions
+          const isAssigned =
+            alreadyAssignedRecordings.has(recordingPrefix.Prefix) ||
+            alreadyAssignedRecordings.has(
+              decodeURIComponent(recordingPrefix.Prefix)
+            );
+
+          if (isAssigned) {
             continue;
           }
 
+          // Check if already annotated
           const filesCommand = new ListObjectsV2Command({
             Bucket: BUCKET_NAME,
             Prefix: recordingPrefix.Prefix,
@@ -1748,37 +1762,33 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
 
           if (!hasAnnotation) {
             availableRecordings.push(recordingPrefix.Prefix);
+
+            if (availableRecordings.length >= recordingsPerAnnotator) {
+              break;
+            }
           }
         }
+
+        if (availableRecordings.length >= recordingsPerAnnotator) {
+          break;
+        }
+      }
+
+      if (availableRecordings.length >= recordingsPerAnnotator) {
+        break;
       }
     }
 
+    logger.info(`Found ${availableRecordings.length} available recordings`);
+
     if (availableRecordings.length === 0) {
       return res.status(404).json({
-        error: "No available unassigned recordings found in the last 10 days",
-        info: `All recordings are either annotated or already assigned to annotators`,
+        error: "No available unassigned recordings found",
       });
     }
-
-    if (availableRecordings.length < recordingsPerAnnotator) {
-      return res.status(400).json({
-        error: `Not enough available recordings. Requested ${recordingsPerAnnotator}, but only ${availableRecordings.length} available`,
-        suggestion: `Consider reducing the number of recordings per annotator`,
-        availableCount: availableRecordings.length,
-      });
-    }
-
-    const shuffledRecordings = availableRecordings.sort(
-      () => Math.random() - 0.5
-    );
-    const newAssignments = shuffledRecordings.slice(0, recordingsPerAnnotator);
 
     const existingRecordings = annotator.annotation_recordings || [];
-    const previousCount = existingRecordings.length;
-
-    const combinedRecordings = [
-      ...new Set([...existingRecordings, ...newAssignments]),
-    ];
+    const combinedRecordings = [...existingRecordings, ...availableRecordings];
 
     await prisma.user.update({
       where: { id: annotator.id },
@@ -1789,20 +1799,13 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
 
     return res.status(200).json({
       success: true,
-      message: `Successfully assigned ${newAssignments.length} recordings to ${annotator.username}`,
+      message: `Successfully assigned ${availableRecordings.length} recordings to ${annotator.username}`,
       assignment: {
         annotatorId: annotator.id,
         username: annotator.username,
-        newAssignments,
-        previousCount,
+        previousCount: existingRecordings.length,
         newCount: combinedRecordings.length,
-        addedCount: newAssignments.length,
-      },
-      summary: {
-        totalAvailableRecordings: availableRecordings.length,
-        totalAlreadyAssigned: alreadyAssignedRecordings.size,
-        requestedCount: recordingsPerAnnotator,
-        assignedCount: newAssignments.length,
+        addedCount: availableRecordings.length,
       },
     });
   } catch (err) {
@@ -2024,6 +2027,7 @@ export const getAvailableRecordingsCount: RequestHandler = async (
       });
     });
 
+    // Get ALL date folders (not just last 10)
     const allDatesCommand = new ListObjectsV2Command({
       Bucket: BUCKET_NAME,
       Prefix: "Arabic/",
@@ -2038,14 +2042,14 @@ export const getAvailableRecordingsCount: RequestHandler = async (
       })) || [];
 
     allDates.sort((a, b) => b.name.localeCompare(a.name));
-    const last10Dates = allDates.slice(0, 10);
 
     let totalRecordings = 0;
     let annotatedRecordings = 0;
     let assignedRecordings = alreadyAssignedRecordings.size;
     let availableRecordings = 0;
 
-    for (const dateFolder of last10Dates) {
+    // Loop through ALL dates
+    for (const dateFolder of allDates) {
       const timeFoldersCommand = new ListObjectsV2Command({
         Bucket: BUCKET_NAME,
         Prefix: dateFolder.path,
@@ -2095,9 +2099,9 @@ export const getAvailableRecordingsCount: RequestHandler = async (
       assignedRecordings,
       availableRecordings,
       dateRange: {
-        from: last10Dates[last10Dates.length - 1]?.name,
-        to: last10Dates[0]?.name,
-        totalDays: last10Dates.length,
+        from: allDates[allDates.length - 1]?.name,
+        to: allDates[0]?.name,
+        totalDays: allDates.length,
       },
     });
   } catch (err) {
