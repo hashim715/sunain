@@ -97,8 +97,6 @@ export const getNextAvailableRecording: RequestHandler = async (
 
     const currentPath = `${language}/${currentDateFolder}/${currentTimeFolder}/${currentRecordingId}/`;
 
-    console.log(currentDateFolder, currentTimeFolder, currentRecordingId);
-
     const currentIndex = user.annotation_recordings.findIndex(
       (path) => path === currentPath
     );
@@ -157,18 +155,14 @@ export const getPreviousAvailableRecording: RequestHandler = async (
       return res.status(404).json({ error: "No recordings assigned" });
     }
 
-    // Build current recording path
     const currentPath = `${language}/${currentDateFolder}/${currentTimeFolder}/${currentRecordingId}/`;
 
-    // Find current recording index
     const currentIndex = user.annotation_recordings.findIndex(
       (path) => path === currentPath
     );
 
-    // Get previous index
     const previousIndex = currentIndex - 1;
 
-    // Check if there's a previous recording
     if (previousIndex < 0) {
       return res.status(200).json({
         hasPrevious: false,
@@ -176,7 +170,6 @@ export const getPreviousAvailableRecording: RequestHandler = async (
       });
     }
 
-    // Get previous recording path
     const previousRecordingPath = user.annotation_recordings[previousIndex];
     const pathParts = previousRecordingPath.split("/").filter((p) => p);
 
@@ -299,7 +292,6 @@ export const listDateFolders: RequestHandler = async (
     const datesWithUnannotatedRecordings = [];
 
     for (const date of last10Dates) {
-      // List all time folders in this date
       const timeCommand = new ListObjectsV2Command({
         Bucket: BUCKET_NAME,
         Prefix: date.path,
