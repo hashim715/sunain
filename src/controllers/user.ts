@@ -705,3 +705,103 @@ export const getPaymentEmails: RequestHandler = async (
     await prisma.$disconnect();
   }
 };
+
+export const changePaymentMethod: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const {
+      newMethod,
+      email,
+    }: { newMethod: "paypal" | "wise" | "revolut"; email: string } = req.body;
+
+    if (!newMethod || !email || !email.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Please provide payment method type and email",
+      });
+    }
+
+    if (!validateEmail(email)) {
+      return res.status(400).json({
+        success: false,
+        message: "Email is not valid",
+      });
+    }
+
+    const token = req.cookies.authToken;
+
+    if (!token) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    const { username }: { username: string } = jwt_decode(token);
+
+    const user = await prisma.user.findFirst({ where: { username: username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { paypalEmail: email },
+          { wiseEmail: email },
+          { revolutEmail: email },
+        ],
+        NOT: { username: username },
+      },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: "This email is already connected to another account",
+      });
+    }
+
+    const updateData: any = {
+      paypalEmail: null,
+      paypalPayoutsEnabled: false,
+      wiseEmail: null,
+      wisePayoutsEnabled: false,
+      revolutEmail: null,
+      revolutePayoutsEnabled: false,
+      stripeAccountId: null,
+    };
+
+    if (newMethod === "paypal") {
+      updateData.paypalEmail = email;
+      updateData.paypalPayoutsEnabled = true;
+    } else if (newMethod === "wise") {
+      updateData.wiseEmail = email;
+      updateData.wisePayoutsEnabled = true;
+    } else if (newMethod === "revolut") {
+      updateData.revolutEmail = email;
+      updateData.revolutePayoutsEnabled = true;
+    }
+
+    await prisma.user.update({
+      where: { username: username },
+      data: updateData,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `Payment method changed to ${newMethod} successfully`,
+    });
+  } catch (err) {
+    logger.error(`Error in changing payment method: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};

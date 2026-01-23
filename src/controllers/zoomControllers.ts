@@ -349,11 +349,11 @@ export const joinMeeting: RequestHandler = async (
       where: {
         meetingId: existingMeeting.id,
         userId: user.id,
-        leftAt: null,
       },
     });
 
-    if (meetingParticipant) {
+    // Check if user is currently in the meeting
+    if (meetingParticipant && !meetingParticipant.leftAt) {
       return res.status(400).json({
         success: false,
         message: "You are already in this meeting",
@@ -367,15 +367,32 @@ export const joinMeeting: RequestHandler = async (
       });
     }
 
-    await prisma.meetingParticipant.create({
-      data: {
-        meetingId: existingMeeting.id,
-        userId: user.id,
-        role: "participant",
-        joinedAt: new Date(),
-        dialect: user.language_dialect,
-      },
-    });
+    // If participant record exists, update it; otherwise create new
+    if (meetingParticipant) {
+      await prisma.meetingParticipant.update({
+        where: {
+          meetingId_userId: {
+            meetingId: existingMeeting.id,
+            userId: user.id,
+          },
+        },
+        data: {
+          joinedAt: new Date(),
+          leftAt: null,
+          dialect: user.language_dialect,
+        },
+      });
+    } else {
+      await prisma.meetingParticipant.create({
+        data: {
+          meetingId: existingMeeting.id,
+          userId: user.id,
+          role: "participant",
+          joinedAt: new Date(),
+          dialect: user.language_dialect,
+        },
+      });
+    }
 
     await prisma.meeting.update({
       where: { sessionName: sessionName },

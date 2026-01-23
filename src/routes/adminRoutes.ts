@@ -28,6 +28,7 @@ import {
   clearAnnotatorAssignments,
   getAssignmentStats,
   clearAllAssignments,
+  getPayrollData,
 } from "../controllers/adminControllers";
 import { protectAdmin } from "../middleware/adminMiddleware";
 
@@ -98,3 +99,4 @@ adminRouter.route("/assignment-stats").get(protectAdmin, getAssignmentStats);
 adminRouter
   .route("/available-recordings-count")
   .get(protectAdmin, getAssignmentStats);
+adminRouter.route("/getPayrollData").get(protectAdmin, getPayrollData);

@@ -10,6 +10,7 @@ import {
   getPaymentEmails,
   addRevolutEmail,
   addWiseEmail,
+  changePaymentMethod,
 } from "../controllers/user";
 
 import multer from "multer";
@@ -41,3 +42,5 @@ userRouter.route("/addRevolutEmail").post(protect, addRevolutEmail);
 userRouter.route("/addWiseEmail").post(protect, addWiseEmail);
 
 userRouter.route("/getPaymentEmails").get(protect, getPaymentEmails);
+
+userRouter.route("/changePaymentMethod").post(protect, changePaymentMethod);

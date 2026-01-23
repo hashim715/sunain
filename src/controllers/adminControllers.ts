@@ -979,19 +979,18 @@ export const markRoomsAsPaid: RequestHandler = async (
   res: Response
 ) => {
   try {
-    const { room_ids } = req.body;
+    const { user_ids } = req.body;
 
-    if (!room_ids || !Array.isArray(room_ids) || room_ids.length === 0) {
-      return res.status(400).json({ error: "Room IDs array is required" });
+    if (!user_ids || !Array.isArray(user_ids) || user_ids.length === 0) {
+      return res.status(400).json({ error: "User IDs array is required" });
     }
+
+    const userIdsInt = user_ids.map((id: string) => parseInt(id));
 
     const result = await prisma.conversation.updateMany({
       where: {
-        meeting: {
-          id: {
-            in: room_ids,
-          },
-          language: "Arabic",
+        userId: {
+          in: userIdsInt,
         },
         user: {
           language: "Arabic",
@@ -1005,7 +1004,6 @@ export const markRoomsAsPaid: RequestHandler = async (
                 { stripePayoutsEnabled: true },
               ],
             },
-
             {
               AND: [
                 { paypalEmail: { not: null } },
@@ -1013,7 +1011,6 @@ export const markRoomsAsPaid: RequestHandler = async (
                 { paypalEmail: { not: "" } },
               ],
             },
-
             {
               AND: [
                 { wiseEmail: { not: null } },
@@ -1021,7 +1018,6 @@ export const markRoomsAsPaid: RequestHandler = async (
                 { wiseEmail: { not: "" } },
               ],
             },
-
             {
               AND: [
                 { revolutEmail: { not: null } },
@@ -1030,6 +1026,9 @@ export const markRoomsAsPaid: RequestHandler = async (
               ],
             },
           ],
+        },
+        meeting: {
+          language: "Arabic",
         },
         flagged_status: false,
         paymentStatus: "unpaid",
@@ -1042,7 +1041,7 @@ export const markRoomsAsPaid: RequestHandler = async (
 
     return res.status(200).json({
       success: true,
-      message: `Marked ${result.count} Arabic conversations as paid`,
+      message: `Marked ${result.count} Arabic conversations as paid for ${user_ids.length} users`,
       updated_count: result.count,
     });
   } catch (err) {
@@ -1060,21 +1059,23 @@ export const undoPayroll: RequestHandler = async (
   res: Response
 ) => {
   try {
-    const { room_ids } = req.body;
+    const { user_ids } = req.body;
 
-    if (!room_ids || !Array.isArray(room_ids) || room_ids.length === 0) {
-      return res.status(400).json({ error: "Room IDs array is required" });
+    if (!user_ids || !Array.isArray(user_ids) || user_ids.length === 0) {
+      return res.status(400).json({ error: "User IDs array is required" });
     }
+
+    const userIdsInt = user_ids.map((id: string) => parseInt(id));
 
     const result = await prisma.conversation.updateMany({
       where: {
-        meeting: {
-          id: {
-            in: room_ids,
-          },
-          language: "Arabic",
+        userId: {
+          in: userIdsInt,
         },
         user: {
+          language: "Arabic",
+        },
+        meeting: {
           language: "Arabic",
         },
         paymentStatus: "paid",
@@ -1087,7 +1088,7 @@ export const undoPayroll: RequestHandler = async (
 
     return res.status(200).json({
       success: true,
-      message: `Reverted ${result.count} Arabic conversations back to unpaid`,
+      message: `Reverted ${result.count} Arabic conversations back to unpaid for ${user_ids.length} users`,
       updated_count: result.count,
     });
   } catch (err) {
@@ -2101,6 +2102,167 @@ export const getAvailableRecordingsCount: RequestHandler = async (
     });
   } catch (err) {
     logger.error(`Error getting available recordings count: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const getPayrollData: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const users = await prisma.user.findMany({
+      where: {
+        user_type: "user",
+        language: "Arabic",
+        adminVerify: "active",
+        conversations: {
+          some: {
+            paymentStatus: "unpaid",
+            status: "completed",
+            flagged_status: false,
+          },
+        },
+      },
+      include: {
+        conversations: {
+          where: {
+            paymentStatus: "unpaid",
+            status: "completed",
+            flagged_status: false,
+          },
+          select: {
+            id: true,
+            duration: true,
+            quality: true,
+            earnings: true,
+            paymentStatus: true,
+            status: true,
+            meetingId: true,
+            meeting: {
+              select: {
+                language: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    const formattedUsers = await Promise.all(
+      users.map(async (user) => {
+        const totalBalance = user.conversations.reduce((sum, conv) => {
+          return sum + parseFloat(conv.earnings.toString());
+        }, 0);
+
+        const totalRecordingMinutes =
+          user.conversations.reduce((sum, conv) => {
+            return sum + Number(conv.duration);
+          }, 0) / 60;
+
+        const numConversations = user.conversations.length;
+
+        const averageQualityScore =
+          numConversations > 0
+            ? user.conversations.reduce((sum, conv) => {
+                return sum + parseFloat(conv.quality.toString());
+              }, 0) / numConversations
+            : 0;
+
+        const age = user.date_of_birth
+          ? calculateAge(user.date_of_birth)
+          : null;
+
+        const flaggedCount = await prisma.conversation.count({
+          where: {
+            userId: user.id,
+            flagged_status: true,
+            status: "completed",
+            meeting: {
+              language: "Arabic",
+            },
+          },
+        });
+
+        const uniqueRoomIds = [
+          ...new Set(user.conversations.map((conv) => conv.meetingId)),
+        ];
+        const roomIdsString =
+          uniqueRoomIds.length > 0
+            ? uniqueRoomIds.map((id) => `Room-${id}`).join(", ")
+            : "N/A";
+
+        const hasStripe =
+          user.stripeAccountId &&
+          user.stripeAccountId !== "N/A" &&
+          user.stripeAccountId !== "" &&
+          user.stripeChargesEnabled === true &&
+          user.stripeDetailsSubmitted === true &&
+          user.stripeOnboardingComplete === true &&
+          user.stripePayoutsEnabled === true;
+
+        const hasPayPal =
+          user.paypalEmail &&
+          user.paypalEmail !== "N/A" &&
+          user.paypalEmail !== "";
+
+        const hasWise =
+          user.wiseEmail && user.wiseEmail !== "N/A" && user.wiseEmail !== "";
+
+        const hasRevolut =
+          user.revolutEmail &&
+          user.revolutEmail !== "N/A" &&
+          user.revolutEmail !== "";
+
+        let paymentMethod = null;
+        if (hasStripe) paymentMethod = "stripe";
+        else if (hasPayPal) paymentMethod = "paypal";
+        else if (hasWise) paymentMethod = "wise";
+        else if (hasRevolut) paymentMethod = "revolut";
+
+        return {
+          user_id: `${user.id}`,
+          email: user.email,
+          full_name: user.name || "N/A",
+          age: age,
+          language: user.language || "N/A",
+          dialect: user.language_dialect || "N/A",
+          total_recording_minutes: parseFloat(totalRecordingMinutes.toFixed(2)),
+          num_conversations: numConversations,
+          total_balance: parseFloat(totalBalance.toFixed(2)),
+          average_quality_score: parseFloat(averageQualityScore.toFixed(2)),
+          status: user.adminVerify,
+          stripe_account_id: user.stripeAccountId || "N/A",
+          stripeOnboardingComplete: user.stripeOnboardingComplete,
+          stripeDetailsSubmitted: user.stripeDetailsSubmitted,
+          stripeChargesEnabled: user.stripeChargesEnabled,
+          stripePayoutsEnabled: user.stripePayoutsEnabled,
+          paypalEmail: user.paypalEmail || "N/A",
+          wiseEmail: user.wiseEmail || "N/A",
+          revolutEmail: user.revolutEmail || "N/A",
+          payment_method: paymentMethod,
+          flagged_count: flaggedCount,
+          room_ids: roomIdsString,
+        };
+      })
+    );
+
+    const usersWithBalance = formattedUsers.filter((u) => u.total_balance > 0);
+
+    return res.status(200).json({
+      success: true,
+      count: usersWithBalance.length,
+      users: usersWithBalance,
+    });
+  } catch (err) {
+    logger.error(`Error getting payroll data: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }
