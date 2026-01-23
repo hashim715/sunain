@@ -11,6 +11,7 @@ import {
   addRevolutEmail,
   addWiseEmail,
   changePaymentMethod,
+  disconnectStripe,
 } from "../controllers/user";
 
 import multer from "multer";
@@ -44,3 +45,5 @@ userRouter.route("/addWiseEmail").post(protect, addWiseEmail);
 userRouter.route("/getPaymentEmails").get(protect, getPaymentEmails);
 
 userRouter.route("/changePaymentMethod").post(protect, changePaymentMethod);
+
+userRouter.route("/disconnectStripe").post(protect, disconnectStripe);

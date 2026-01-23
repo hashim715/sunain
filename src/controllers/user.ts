@@ -805,3 +805,58 @@ export const changePaymentMethod: RequestHandler = async (
     await prisma.$disconnect();
   }
 };
+
+export const disconnectStripe: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const token = req.cookies.authToken;
+
+    if (!token) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    const { username }: { username: string } = jwt_decode(token);
+
+    const user = await prisma.user.findFirst({ where: { username: username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    if (!user.stripeAccountId) {
+      return res.status(400).json({
+        success: false,
+        message: "No Stripe account connected",
+      });
+    }
+
+    await prisma.user.update({
+      where: { username: username },
+      data: {
+        stripeAccountId: null,
+        stripeOnboardingComplete: false,
+        stripeChargesEnabled: false,
+        stripeDetailsSubmitted: false,
+        stripePayoutsEnabled: false,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Stripe account disconnected successfully",
+    });
+  } catch (err) {
+    logger.error(`Error in disconnecting stripe: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
