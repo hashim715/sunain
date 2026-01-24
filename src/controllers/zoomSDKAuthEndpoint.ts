@@ -1250,6 +1250,7 @@ import {
 } from "@aws-sdk/client-s3";
 import Queue from "bull";
 import axios from "axios";
+import { randomUUID, createHash } from "crypto";
 
 dotenv.config();
 
@@ -1859,6 +1860,38 @@ function calculateAge(dateOfBirth: string) {
   return age;
 }
 
+function slugify(input: string) {
+  return input
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+const pad = (n: number, w = 2) => n.toString().padStart(w, "0");
+
+function getLATimeParts(date: Date) {
+  const la = new Date(
+    date.toLocaleString("en-US", {
+      timeZone: "America/Los_Angeles",
+    })
+  );
+
+  return {
+    date: `${la.getFullYear()}-${pad(la.getMonth() + 1)}-${pad(la.getDate())}`,
+    time: `${pad(la.getHours())}-${pad(la.getMinutes())}-${pad(
+      la.getSeconds()
+    )}-${pad(la.getMilliseconds(), 3)}`,
+  };
+}
+
+function buildSessionHash(meetingName: string, sessionId: number) {
+  return createHash("sha1")
+    .update(`${meetingName}:${sessionId}`)
+    .digest("hex")
+    .slice(0, 8);
+}
+
 recordingQueue.process("process-meeting", async (job: any) => {
   const { meetingName, bucket, directories } = job.data;
 
@@ -2019,30 +2052,13 @@ recordingQueue.process("process-meeting", async (job: any) => {
       console.log(`📦 Organizing session ${session.recordingNumber}`);
       console.log(`   Files: ${files.length}`);
 
-      const meetings_date = meeting.createdAt
-        .toLocaleString("en-CA", {
-          timeZone: "America/Los_Angeles",
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-        })
-        .replace(/,/g, "")
-        .replace(/\s+/g, "-")
-        .toLowerCase();
+      const { date, time } = getLATimeParts(meeting.createdAt);
 
-      const folder_name = `${meetings_date}/${meeting.createdAt
-        .toLocaleString("en-CA", {
-          timeZone: "America/Los_Angeles",
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-        })
-        .replace(/,/g, "")
-        .replace(/\s+/g, "-")
-        .toLowerCase()}`;
+      const meetingSlug = slugify(meetingName);
+
+      const sessionHash = buildSessionHash(meetingName, session.id);
+
+      const folder_name = `${date}/${time}_${meetingSlug}_sess-${sessionHash}`;
 
       for (const s3Key of files) {
         const participantMatch = s3Key.match(/separate(\d+)/);
