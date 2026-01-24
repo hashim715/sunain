@@ -1720,28 +1720,9 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
 
     const availableRecordings: string[] = [];
     let skippedNoConversation = 0;
-    let skippedTooShort = 0;
+    let skippedTooSmall = 0;
 
-    const MIN_DURATION_SECONDS = 120;
-
-    const getAudioDuration = async (key: string): Promise<number | null> => {
-      try {
-        const command = new GetObjectCommand({
-          Bucket: BUCKET_NAME,
-          Key: key,
-        });
-        const signedUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
-        const { stdout } = await execAsync(
-          `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${signedUrl}"`,
-          { timeout: 60000 }
-        );
-        const duration = parseFloat(stdout.trim());
-        return isNaN(duration) ? null : duration;
-      } catch (err) {
-        logger.warn(`Could not get duration for ${key}: ${err}`);
-        return null;
-      }
-    };
+    const MIN_SIZE_BYTES = 900 * 1024;
 
     outerLoop: for (const dateFolder of allDates) {
       const timeFoldersCommand = new ListObjectsV2Command({
@@ -1800,14 +1781,13 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
             continue;
           }
 
-          const duration = await getAudioDuration(conversationFile.Key);
-
-          if (duration === null || duration < MIN_DURATION_SECONDS) {
-            skippedTooShort++;
+          const fileSize = conversationFile.Size || 0;
+          if (fileSize < MIN_SIZE_BYTES) {
+            skippedTooSmall++;
             logger.info(
-              `Skipped ${recordingPrefix.Prefix} - duration: ${
-                duration?.toFixed(2) || "unknown"
-              }s`
+              `Skipped ${recordingPrefix.Prefix} - size: ${(
+                fileSize / 1024
+              ).toFixed(0)} KB`
             );
             continue;
           }
@@ -1818,7 +1798,7 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
     }
 
     logger.info(
-      `Found ${availableRecordings.length} available recordings (skipped ${skippedNoConversation} no mp3, ${skippedTooShort} too short)`
+      `Found ${availableRecordings.length} available recordings (skipped ${skippedNoConversation} no mp3, ${skippedTooSmall} too small)`
     );
 
     if (availableRecordings.length === 0) {
@@ -1826,8 +1806,8 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
         error: "No available unassigned recordings found",
         details: {
           skippedNoConversation,
-          skippedTooShort,
-          minDurationRequired: MIN_DURATION_SECONDS,
+          skippedTooSmall,
+          minSizeRequired: `${MIN_SIZE_BYTES / 1024} KB`,
         },
       });
     }
@@ -1850,8 +1830,8 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
         newCount: combinedRecordings.length,
         addedCount: availableRecordings.length,
         skippedNoConversation,
-        skippedTooShort,
-        minDurationRequired: MIN_DURATION_SECONDS,
+        skippedTooSmall,
+        minSizeRequired: `${MIN_SIZE_BYTES / 1024} KB`,
       },
     });
   } catch (err: any) {
