@@ -74,6 +74,8 @@ const allowedOrigins = [
   "http://0.0.0.0:5173",
   "https://82b93bfbbf3f.ngrok-free.app",
   "https://0e750b02e8f3.ngrok-free.app",
+  "https://annotation.sunain.com",
+  "http://localhost:3001",
 ];
 
 app.use(express.json());
@@ -103,7 +105,7 @@ app.use(cors(corsOptions));
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-app.use(timeout("40s"));
+app.use(timeout("150s"));
 
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {

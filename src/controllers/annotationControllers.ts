@@ -549,6 +549,8 @@ export const uploadAnnotationFile: RequestHandler = async (
   try {
     const { recordingPath, content } = req.body;
 
+    console.log(recordingPath, content);
+
     if (!recordingPath || !content) {
       return res
         .status(400)

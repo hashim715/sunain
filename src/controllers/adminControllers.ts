@@ -14,6 +14,11 @@ import {
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
 import { s3 } from "../config/aws_s3";
+import { exec } from "child_process";
+import { promisify } from "util";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+const execAsync = promisify(exec);
 
 dotenv.config();
 
@@ -1650,13 +1655,20 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
   req: Request,
   res: Response
 ) => {
+  let responseSent = false;
+
+  const sendResponse = (statusCode: number, data: any) => {
+    if (!responseSent && !res.headersSent) {
+      responseSent = true;
+      return res.status(statusCode).json(data);
+    }
+  };
+
   try {
     const { annotatorId, recordingsPerAnnotator = 25 } = req.body;
 
     if (!annotatorId) {
-      return res.status(400).json({
-        error: "Annotator ID is required",
-      });
+      return sendResponse(400, { error: "Annotator ID is required" });
     }
 
     const annotator = await prisma.user.findUnique({
@@ -1672,16 +1684,14 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
     });
 
     if (!annotator) {
-      return res.status(404).json({
+      return sendResponse(404, {
         error: "Annotator not found or user is not an annotator",
       });
     }
 
     const allAnnotators = await prisma.user.findMany({
       where: { is_annotator: true },
-      select: {
-        annotation_recordings: true,
-      },
+      select: { annotation_recordings: true },
     });
 
     const alreadyAssignedRecordings = new Set<string>();
@@ -1693,7 +1703,7 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
     });
 
     logger.info(
-      `Found ${alreadyAssignedRecordings.size} already assigned recordings (with variations)`
+      `Found ${alreadyAssignedRecordings.size} already assigned recordings`
     );
 
     const allDatesCommand = new ListObjectsV2Command({
@@ -1710,8 +1720,30 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
 
     const availableRecordings: string[] = [];
     let skippedNoConversation = 0;
+    let skippedTooShort = 0;
 
-    for (const dateFolder of allDates) {
+    const MIN_DURATION_SECONDS = 120;
+
+    const getAudioDuration = async (key: string): Promise<number | null> => {
+      try {
+        const command = new GetObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: key,
+        });
+        const signedUrl = await getSignedUrl(s3, command, { expiresIn: 300 });
+        const { stdout } = await execAsync(
+          `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${signedUrl}"`,
+          { timeout: 60000 }
+        );
+        const duration = parseFloat(stdout.trim());
+        return isNaN(duration) ? null : duration;
+      } catch (err) {
+        logger.warn(`Could not get duration for ${key}: ${err}`);
+        return null;
+      }
+    };
+
+    outerLoop: for (const dateFolder of allDates) {
       const timeFoldersCommand = new ListObjectsV2Command({
         Bucket: BUCKET_NAME,
         Prefix: dateFolder,
@@ -1732,6 +1764,8 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
         const recordingFolders = recordingsResponse.CommonPrefixes || [];
 
         for (const recordingPrefix of recordingFolders) {
+          if (availableRecordings.length >= recordingsPerAnnotator)
+            break outerLoop;
           if (!recordingPrefix.Prefix) continue;
 
           const isAssigned =
@@ -1740,9 +1774,7 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
               decodeURIComponent(recordingPrefix.Prefix)
             );
 
-          if (isAssigned) {
-            continue;
-          }
+          if (isAssigned) continue;
 
           const filesCommand = new ListObjectsV2Command({
             Bucket: BUCKET_NAME,
@@ -1752,49 +1784,50 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
           const filesResponse = await s3.send(filesCommand);
           const files = filesResponse.Contents || [];
 
-          const hasConversationMp3 = files.some(
+          const hasAnnotation = files.some((file) =>
+            file.Key?.endsWith("human_transcript.txt")
+          );
+          if (hasAnnotation) continue;
+
+          const conversationFile = files.find(
             (file) =>
               file.Key?.endsWith("conversation.mp3") ||
               file.Key?.endsWith("Conversation.mp3")
           );
 
-          if (!hasConversationMp3) {
+          if (!conversationFile || !conversationFile.Key) {
             skippedNoConversation++;
             continue;
           }
 
-          const hasAnnotation = files.some((file) =>
-            file.Key?.endsWith("human_transcript.txt")
-          );
+          const duration = await getAudioDuration(conversationFile.Key);
 
-          if (!hasAnnotation) {
-            availableRecordings.push(recordingPrefix.Prefix);
-
-            if (availableRecordings.length >= recordingsPerAnnotator) {
-              break;
-            }
+          if (duration === null || duration < MIN_DURATION_SECONDS) {
+            skippedTooShort++;
+            logger.info(
+              `Skipped ${recordingPrefix.Prefix} - duration: ${
+                duration?.toFixed(2) || "unknown"
+              }s`
+            );
+            continue;
           }
-        }
 
-        if (availableRecordings.length >= recordingsPerAnnotator) {
-          break;
+          availableRecordings.push(recordingPrefix.Prefix);
         }
-      }
-
-      if (availableRecordings.length >= recordingsPerAnnotator) {
-        break;
       }
     }
 
     logger.info(
-      `Found ${availableRecordings.length} available recordings (skipped ${skippedNoConversation} without conversation.mp3)`
+      `Found ${availableRecordings.length} available recordings (skipped ${skippedNoConversation} no mp3, ${skippedTooShort} too short)`
     );
 
     if (availableRecordings.length === 0) {
-      return res.status(404).json({
+      return sendResponse(404, {
         error: "No available unassigned recordings found",
         details: {
           skippedNoConversation,
+          skippedTooShort,
+          minDurationRequired: MIN_DURATION_SECONDS,
         },
       });
     }
@@ -1804,12 +1837,10 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
 
     await prisma.user.update({
       where: { id: annotator.id },
-      data: {
-        annotation_recordings: combinedRecordings,
-      },
+      data: { annotation_recordings: combinedRecordings },
     });
 
-    return res.status(200).json({
+    return sendResponse(200, {
       success: true,
       message: `Successfully assigned ${availableRecordings.length} recordings to ${annotator.username}`,
       assignment: {
@@ -1819,13 +1850,16 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
         newCount: combinedRecordings.length,
         addedCount: availableRecordings.length,
         skippedNoConversation,
+        skippedTooShort,
+        minDurationRequired: MIN_DURATION_SECONDS,
       },
     });
-  } catch (err) {
-    logger.error(`Error assigning recordings to annotator: ${err}`);
-    if (!res.headersSent) {
-      return internalServerError(res);
-    }
+  } catch (err: any) {
+    logger.error(`Error assigning recordings: ${err.message}`);
+    return sendResponse(500, {
+      error: "Internal server error",
+      message: err.message,
+    });
   } finally {
     await prisma.$disconnect();
   }
