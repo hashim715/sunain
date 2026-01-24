@@ -29,6 +29,8 @@ import {
   getAssignmentStats,
   clearAllAssignments,
   getPayrollData,
+  getAnnotatorById,
+  updateAnnotator,
 } from "../controllers/adminControllers";
 import { protectAdmin } from "../middleware/adminMiddleware";
 
@@ -100,3 +102,8 @@ adminRouter
   .route("/available-recordings-count")
   .get(protectAdmin, getAssignmentStats);
 adminRouter.route("/getPayrollData").get(protectAdmin, getPayrollData);
+adminRouter
+  .route("/annotators/:annotatorId")
+  .get(protectAdmin, getAnnotatorById)
+  .put(protectAdmin, updateAnnotator)
+  .delete(protectAdmin, deleteAnnotator);

@@ -1677,7 +1677,6 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
       });
     }
 
-    // Get all already assigned recordings
     const allAnnotators = await prisma.user.findMany({
       where: { is_annotator: true },
       select: {
@@ -1685,11 +1684,9 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
       },
     });
 
-    // Normalize paths for comparison (decode URL encoding)
     const alreadyAssignedRecordings = new Set<string>();
     allAnnotators.forEach((ann) => {
       ann.annotation_recordings?.forEach((recording) => {
-        // Store both encoded and decoded versions
         alreadyAssignedRecordings.add(recording);
         alreadyAssignedRecordings.add(decodeURIComponent(recording));
       });
@@ -1699,7 +1696,6 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
       `Found ${alreadyAssignedRecordings.size} already assigned recordings (with variations)`
     );
 
-    // Get all date folders
     const allDatesCommand = new ListObjectsV2Command({
       Bucket: BUCKET_NAME,
       Prefix: "Arabic/",
@@ -1713,8 +1709,8 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
     logger.info(`Found ${allDates.length} date folders`);
 
     const availableRecordings: string[] = [];
+    let skippedNoConversation = 0;
 
-    // Loop through all dates
     for (const dateFolder of allDates) {
       const timeFoldersCommand = new ListObjectsV2Command({
         Bucket: BUCKET_NAME,
@@ -1738,7 +1734,6 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
         for (const recordingPrefix of recordingFolders) {
           if (!recordingPrefix.Prefix) continue;
 
-          // Check both encoded and decoded versions
           const isAssigned =
             alreadyAssignedRecordings.has(recordingPrefix.Prefix) ||
             alreadyAssignedRecordings.has(
@@ -1749,14 +1744,26 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
             continue;
           }
 
-          // Check if already annotated
           const filesCommand = new ListObjectsV2Command({
             Bucket: BUCKET_NAME,
             Prefix: recordingPrefix.Prefix,
           });
 
           const filesResponse = await s3.send(filesCommand);
-          const hasAnnotation = filesResponse.Contents?.some((file) =>
+          const files = filesResponse.Contents || [];
+
+          const hasConversationMp3 = files.some(
+            (file) =>
+              file.Key?.endsWith("conversation.mp3") ||
+              file.Key?.endsWith("Conversation.mp3")
+          );
+
+          if (!hasConversationMp3) {
+            skippedNoConversation++;
+            continue;
+          }
+
+          const hasAnnotation = files.some((file) =>
             file.Key?.endsWith("human_transcript.txt")
           );
 
@@ -1779,11 +1786,16 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
       }
     }
 
-    logger.info(`Found ${availableRecordings.length} available recordings`);
+    logger.info(
+      `Found ${availableRecordings.length} available recordings (skipped ${skippedNoConversation} without conversation.mp3)`
+    );
 
     if (availableRecordings.length === 0) {
       return res.status(404).json({
         error: "No available unassigned recordings found",
+        details: {
+          skippedNoConversation,
+        },
       });
     }
 
@@ -1806,6 +1818,7 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
         previousCount: existingRecordings.length,
         newCount: combinedRecordings.length,
         addedCount: availableRecordings.length,
+        skippedNoConversation,
       },
     });
   } catch (err) {
@@ -2267,6 +2280,140 @@ export const getPayrollData: RequestHandler = async (
     });
   } catch (err) {
     logger.error(`Error getting payroll data: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const updateAnnotator: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { annotatorId } = req.params;
+    const { email, password, annotation_recordings, adminVerify } = req.body;
+
+    const annotator = await prisma.user.findUnique({
+      where: {
+        id: parseInt(annotatorId),
+        is_annotator: true,
+      },
+    });
+
+    if (!annotator) {
+      return res.status(404).json({
+        error: "Annotator not found",
+      });
+    }
+
+    const updateData: any = {};
+
+    // Update email if provided
+    if (email && email !== annotator.email) {
+      if (!validateEmail(email)) {
+        return res.status(400).json({
+          success: false,
+          message: "Email is not valid",
+        });
+      }
+
+      const existingUser = await prisma.user.findFirst({
+        where: {
+          email: email,
+          NOT: { id: parseInt(annotatorId) },
+        },
+      });
+
+      if (existingUser) {
+        return res.status(400).json({
+          error: "Email already in use by another user",
+        });
+      }
+
+      updateData.email = email;
+    }
+
+    // Update password if provided
+    if (password && password.trim()) {
+      if (password.length < 6) {
+        return res.status(400).json({
+          error: "Password must be at least 6 characters",
+        });
+      }
+      updateData.password = await bcrypt.hash(password, 10);
+    }
+
+    // Update folders if provided
+    if (annotation_recordings !== undefined) {
+      updateData.annotation_recordings = annotation_recordings;
+    }
+
+    // Update status if provided
+    if (adminVerify) {
+      updateData.adminVerify = adminVerify;
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: parseInt(annotatorId) },
+      data: updateData,
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        annotation_recordings: true,
+        adminVerify: true,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Annotator updated successfully",
+      annotator: updated,
+    });
+  } catch (err) {
+    logger.error(`Error updating annotator: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
+export const getAnnotatorById: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    const { annotatorId } = req.params;
+
+    const annotator = await prisma.user.findUnique({
+      where: {
+        id: parseInt(annotatorId),
+        is_annotator: true,
+      },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        annotation_recordings: true,
+        adminVerify: true,
+        createdAt: true,
+      },
+    });
+
+    if (!annotator) {
+      return res.status(404).json({
+        error: "Annotator not found",
+      });
+    }
+
+    return res.status(200).json({ annotator });
+  } catch (err) {
+    logger.error(`Error getting annotator: ${err}`);
     if (!res.headersSent) {
       return internalServerError(res);
     }
