@@ -542,14 +542,10 @@ export const getRecordingFilesPlusAnnotated: RequestHandler = async (
   }
 };
 
-export const uploadAnnotationFile: RequestHandler = async (
-  req: Request,
-  res: Response
-) => {
+export const uploadAnnotationFile: RequestHandler = async (req, res) => {
   try {
-    const { recordingPath, content } = req.body;
-
-    console.log(recordingPath, content);
+    const { recordingPath } = req.body;
+    const content = req.file?.buffer.toString("utf-8");
 
     if (!recordingPath || !content) {
       return res
@@ -559,25 +555,19 @@ export const uploadAnnotationFile: RequestHandler = async (
 
     const key = `${recordingPath}human_transcript.txt`;
 
-    const command = new PutObjectCommand({
-      Bucket: BUCKET_NAME,
-      Key: key,
-      Body: content,
-      ContentType: "text/plain",
-    });
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: BUCKET_NAME,
+        Key: key,
+        Body: content,
+        ContentType: "text/plain; charset=utf-8",
+      })
+    );
 
-    await s3.send(command);
-
-    return res
-      .status(200)
-      .json({ success: true, message: "Annotation uploaded successfully" });
+    return res.status(200).json({ success: true });
   } catch (err) {
-    logger.error(`Error in uploading annotation file: ${err}`);
-    if (!res.headersSent) {
-      return internalServerError(res);
-    }
-  } finally {
-    await prisma.$disconnect();
+    logger.error(`Error uploading annotation: ${err}`);
+    return internalServerError(res);
   }
 };
 

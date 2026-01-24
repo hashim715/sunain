@@ -16,6 +16,16 @@ import {
 
 export const annotationRouter: Router = express.Router();
 
+import multer from "multer";
+
+const upload = multer({ storage: multer.memoryStorage() });
+
+annotationRouter.post(
+  "/uploadAnnotationFile",
+  upload.single("content"),
+  uploadAnnotationFile
+);
+
 annotationRouter.route("/login").post(login);
 
 annotationRouter.route("/listLanguages").get(listLanguages);
@@ -50,8 +60,6 @@ annotationRouter.get(
 annotationRouter
   .route("/firstRecording/:language")
   .get(getFirstRecordingForUser);
-
-annotationRouter.route("/uploadAnnotationFile").post(uploadAnnotationFile);
 
 annotationRouter.post(
   "/removeRecordingFromAnnotator",
