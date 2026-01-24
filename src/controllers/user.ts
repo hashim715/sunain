@@ -5,6 +5,7 @@ import { prisma } from "../config/postgres";
 import { logger } from "../utils/logger";
 import { uploadToS3 } from "../utils/uploadToS3";
 import { validateEmail } from "../utils/checkvalidEmail";
+import { validateAndNormalizePhoneNumber } from "../utils/validatePhoneNumber";
 
 export const getAuthorizedUrl: RequestHandler = async (
   req: Request,
@@ -660,6 +661,96 @@ export const addRevolutEmail: RequestHandler = async (
   }
 };
 
+export const addinstaPayPhone: RequestHandler = async (
+  req: Request,
+  res: Response
+) => {
+  try {
+    let { instaPayPhone }: { instaPayPhone: string } = req.body;
+
+    if (!instaPayPhone || !instaPayPhone.trim()) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Please provide valid email" });
+    }
+
+    const { isValid, normalized } =
+      validateAndNormalizePhoneNumber(instaPayPhone);
+
+    if (!isValid) {
+      return res.status(400).json({
+        success: false,
+        message: "Phone number that you provided is not valid",
+      });
+    }
+
+    instaPayPhone = normalized;
+
+    const token = req.cookies.authToken;
+
+    if (!token) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    const { username }: { username: string } = jwt_decode(token);
+
+    const user = await prisma.user.findFirst({ where: { username: username } });
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User does not exists" });
+    }
+
+    if (
+      user.paypalEmail ||
+      user.wiseEmail ||
+      user.stripeAccountId ||
+      user.revolutEmail
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "You already have a payment method connected. Please remove it first.",
+      });
+    }
+
+    const existingUser = await prisma.user.findFirst({
+      where: {
+        instaPayPhone: instaPayPhone,
+        NOT: { username: username },
+      },
+    });
+
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "This instapay phone number is already connected to another account",
+      });
+    }
+
+    await prisma.user.update({
+      where: { username: username },
+      data: { instaPayPhone: instaPayPhone, instaPayEnabled: true },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Instapay phone added successfully",
+    });
+  } catch (err) {
+    logger.error(`Error in adding instapay phone number: ${err}`);
+    if (!res.headersSent) {
+      return internalServerError(res);
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+};
+
 export const getPaymentEmails: RequestHandler = async (
   req: Request,
   res: Response
@@ -681,6 +772,7 @@ export const getPaymentEmails: RequestHandler = async (
         paypalEmail: true,
         wiseEmail: true,
         revolutEmail: true,
+        instaPayPhone: true,
       },
     });
 
@@ -695,6 +787,7 @@ export const getPaymentEmails: RequestHandler = async (
       paypalEmail: user.paypalEmail || null,
       wiseEmail: user.wiseEmail || null,
       revolutEmail: user.revolutEmail || null,
+      instaPayPhone: user.instaPayPhone || null,
     });
   } catch (err) {
     logger.error(`Error in getting payment emails: ${err}`);
@@ -714,20 +807,47 @@ export const changePaymentMethod: RequestHandler = async (
     const {
       newMethod,
       email,
-    }: { newMethod: "paypal" | "wise" | "revolut"; email: string } = req.body;
+      phone,
+    }: {
+      newMethod: "paypal" | "wise" | "revolut" | "instapay";
+      email?: string;
+      phone?: string;
+    } = req.body;
 
-    if (!newMethod || !email || !email.trim()) {
+    if (!newMethod) {
       return res.status(400).json({
         success: false,
-        message: "Please provide payment method type and email",
+        message: "Please provide payment method type",
       });
     }
 
-    if (!validateEmail(email)) {
-      return res.status(400).json({
-        success: false,
-        message: "Email is not valid",
-      });
+    if (newMethod === "instapay") {
+      if (!phone || !phone.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Please provide phone number for InstaPay",
+        });
+      }
+      const { isValid, normalized } = validateAndNormalizePhoneNumber(phone);
+      if (!isValid) {
+        return res.status(400).json({
+          success: false,
+          message: "Phone number is not valid",
+        });
+      }
+    } else {
+      if (!email || !email.trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Please provide email",
+        });
+      }
+      if (!validateEmail(email)) {
+        return res.status(400).json({
+          success: false,
+          message: "Email is not valid",
+        });
+      }
     }
 
     const token = req.cookies.authToken;
@@ -748,22 +868,38 @@ export const changePaymentMethod: RequestHandler = async (
         .json({ success: false, message: "User does not exists" });
     }
 
-    const existingUser = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { paypalEmail: email },
-          { wiseEmail: email },
-          { revolutEmail: email },
-        ],
-        NOT: { username: username },
-      },
-    });
-
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        message: "This email is already connected to another account",
+    if (newMethod === "instapay") {
+      const { normalized } = validateAndNormalizePhoneNumber(phone!);
+      const existingUser = await prisma.user.findFirst({
+        where: {
+          instaPayPhone: normalized,
+          NOT: { username: username },
+        },
       });
+      if (existingUser) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "This InstaPay phone is already connected to another account",
+        });
+      }
+    } else {
+      const existingUser = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { paypalEmail: email },
+            { wiseEmail: email },
+            { revolutEmail: email },
+          ],
+          NOT: { username: username },
+        },
+      });
+      if (existingUser) {
+        return res.status(400).json({
+          success: false,
+          message: "This email is already connected to another account",
+        });
+      }
     }
 
     const updateData: any = {
@@ -773,6 +909,8 @@ export const changePaymentMethod: RequestHandler = async (
       wisePayoutsEnabled: false,
       revolutEmail: null,
       revolutePayoutsEnabled: false,
+      instaPayPhone: null,
+      instaPayEnabled: false,
       stripeAccountId: null,
     };
 
@@ -785,6 +923,10 @@ export const changePaymentMethod: RequestHandler = async (
     } else if (newMethod === "revolut") {
       updateData.revolutEmail = email;
       updateData.revolutePayoutsEnabled = true;
+    } else if (newMethod === "instapay") {
+      const { normalized } = validateAndNormalizePhoneNumber(phone!);
+      updateData.instaPayPhone = normalized;
+      updateData.instaPayEnabled = true;
     }
 
     await prisma.user.update({
