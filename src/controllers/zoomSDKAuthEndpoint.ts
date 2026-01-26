@@ -1250,7 +1250,6 @@ import {
 } from "@aws-sdk/client-s3";
 import Queue from "bull";
 import axios from "axios";
-import { randomUUID, createHash } from "crypto";
 
 dotenv.config();
 
@@ -1392,57 +1391,221 @@ const s3Client = new S3Client({
   region: process.env.AWS_REGION || "us-east-2",
 });
 
+// const parseS3Url = (
+//   externalStorageUrl: string
+// ): { bucket: string; key: string } | null => {
+//   const match = externalStorageUrl.match(/^s3:\/\/([^\/]+)\/(.+)$/);
+
+//   if (match) {
+//     return {
+//       bucket: match[1],
+//       key: match[2],
+//     };
+//   }
+
+//   return null;
+// };
+
+// const extractTimestampFromS3Key = (s3Key: string): Date | null => {
+//   const match = s3Key.match(/GMT(\d{8})-(\d{6})/);
+
+//   if (match) {
+//     const dateStr = match[1];
+//     const timeStr = match[2];
+
+//     const year = dateStr.substring(0, 4);
+//     const month = dateStr.substring(4, 6);
+//     const day = dateStr.substring(6, 8);
+//     const hour = timeStr.substring(0, 2);
+//     const minute = timeStr.substring(2, 4);
+//     const second = timeStr.substring(4, 6);
+
+//     return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`);
+//   }
+
+//   return null;
+// };
+
+// const getAllFilesFromS3Directory = async (
+//   bucket: string,
+//   prefix: string
+// ): Promise<string[]> => {
+//   console.log(`🔍 Listing files in S3: ${bucket}/${prefix}`);
+
+//   const command = new ListObjectsV2Command({
+//     Bucket: bucket,
+//     Prefix: prefix,
+//   });
+
+//   const response = await s3Client.send(command);
+//   const files =
+//     response.Contents?.map((obj) => obj.Key!)
+//       .filter((key) => key.endsWith(".m4a"))
+//       .sort() || [];
+
+//   console.log(`📦 Found ${files.length} audio files`);
+//   return files;
+// };
+
+// const getAllFilesFromMultipleDirectories = async (
+//   bucket: string,
+//   directories: string[]
+// ): Promise<string[]> => {
+//   console.log(`🔍 Searching ${directories.length} S3 directories...`);
+
+//   const allFiles: string[] = [];
+
+//   for (const directory of directories) {
+//     const files = await getAllFilesFromS3Directory(bucket, directory);
+//     allFiles.push(...files);
+//   }
+
+//   console.log(`📦 Total files across all directories: ${allFiles.length}`);
+//   return allFiles.sort();
+// };
+
+// const groupFilesInOrder = (
+//   files: string[],
+//   participantCount: number
+// ): string[][] => {
+//   const groups: string[][] = [];
+
+//   for (let i = 0; i < files.length; i += participantCount) {
+//     const group = files.slice(i, i + participantCount);
+//     groups.push(group);
+//   }
+
+//   console.log(
+//     `📊 Grouped ${files.length} files into ${groups.length} sessions`
+//   );
+//   groups.forEach((group, index) => {
+//     console.log(`   Session ${index + 1}: ${group.length} files`);
+//     group.forEach((file) => {
+//       const timestamp = extractTimestampFromS3Key(file);
+//       console.log(
+//         `      - ${file.split("/").pop()} (${timestamp?.toISOString()})`
+//       );
+//     });
+//   });
+
+//   return groups;
+// };
+
+// -----------------------------
+// Helpers
+// -----------------------------
 const parseS3Url = (
   externalStorageUrl: string
 ): { bucket: string; key: string } | null => {
   const match = externalStorageUrl.match(/^s3:\/\/([^\/]+)\/(.+)$/);
-
-  if (match) {
-    return {
-      bucket: match[1],
-      key: match[2],
-    };
-  }
-
-  return null;
+  if (!match) return null;
+  return { bucket: match[1], key: match[2] };
 };
 
 const extractTimestampFromS3Key = (s3Key: string): Date | null => {
   const match = s3Key.match(/GMT(\d{8})-(\d{6})/);
+  if (!match) return null;
 
-  if (match) {
-    const dateStr = match[1];
-    const timeStr = match[2];
+  const dateStr = match[1];
+  const timeStr = match[2];
 
-    const year = dateStr.substring(0, 4);
-    const month = dateStr.substring(4, 6);
-    const day = dateStr.substring(6, 8);
-    const hour = timeStr.substring(0, 2);
-    const minute = timeStr.substring(2, 4);
-    const second = timeStr.substring(4, 6);
+  const year = dateStr.substring(0, 4);
+  const month = dateStr.substring(4, 6);
+  const day = dateStr.substring(6, 8);
+  const hour = timeStr.substring(0, 2);
+  const minute = timeStr.substring(2, 4);
+  const second = timeStr.substring(4, 6);
 
-    return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`);
-  }
-
-  return null;
+  return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`);
 };
 
+// ✅ YOUR Zoom BYOS path format (from your log):
+// cmr/byos/2026/01/26/<UUID>/cmr_byos/...
+function extractByosInfoFromKey(key: string): {
+  basePath: string; // "cmr/byos"
+  y: number;
+  mo: number;
+  d: number;
+  uuid: string;
+  tail: string; // "cmr_byos/"
+} | null {
+  const m = key.match(
+    /^(.+?)\/(\d{4})\/(\d{2})\/(\d{2})\/([0-9A-Fa-f-]{36})\/([^/]+\/)/
+  );
+  if (!m) return null;
+
+  return {
+    basePath: m[1],
+    y: Number(m[2]),
+    mo: Number(m[3]),
+    d: Number(m[4]),
+    uuid: m[5],
+    tail: m[6],
+  };
+}
+
+function shiftUtcYmd(
+  y: number,
+  mo: number,
+  d: number,
+  deltaDays: number
+): { y: number; mo: number; d: number } {
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + deltaDays);
+  return {
+    y: dt.getUTCFullYear(),
+    mo: dt.getUTCMonth() + 1,
+    d: dt.getUTCDate(),
+  };
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+function buildByosPrefix(
+  basePath: string,
+  y: number,
+  mo: number,
+  d: number,
+  uuid: string,
+  tail: string
+) {
+  return `${basePath}/${y}/${pad2(mo)}/${pad2(d)}/${uuid}/${tail}`;
+}
+
+// ✅ Robust ordering: sort by embedded GMT timestamp + separate#
+function sortKeyForZoomFile(k: string) {
+  const ts = extractTimestampFromS3Key(k)?.getTime() ?? 0;
+  const sep = Number(k.match(/separate(\d+)/)?.[1] || "0");
+  return `${String(ts).padStart(15, "0")}-${String(sep).padStart(3, "0")}-${k}`;
+}
+
+// -----------------------------
+// ✅ S3 listing with pagination
+// -----------------------------
 const getAllFilesFromS3Directory = async (
   bucket: string,
   prefix: string
 ): Promise<string[]> => {
   console.log(`🔍 Listing files in S3: ${bucket}/${prefix}`);
 
-  const command = new ListObjectsV2Command({
-    Bucket: bucket,
-    Prefix: prefix,
-  });
+  let token: string | undefined;
+  const files: string[] = [];
 
-  const response = await s3Client.send(command);
-  const files =
-    response.Contents?.map((obj) => obj.Key!)
-      .filter((key) => key.endsWith(".m4a"))
-      .sort() || [];
+  do {
+    const resp = await s3Client.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        ContinuationToken: token,
+      })
+    );
+
+    (resp.Contents || []).forEach((o) => {
+      if (o.Key && o.Key.endsWith(".m4a")) files.push(o.Key);
+    });
+
+    token = resp.IsTruncated ? resp.NextContinuationToken : undefined;
+  } while (token);
 
   console.log(`📦 Found ${files.length} audio files`);
   return files;
@@ -1455,14 +1618,14 @@ const getAllFilesFromMultipleDirectories = async (
   console.log(`🔍 Searching ${directories.length} S3 directories...`);
 
   const allFiles: string[] = [];
-
   for (const directory of directories) {
     const files = await getAllFilesFromS3Directory(bucket, directory);
     allFiles.push(...files);
   }
 
-  console.log(`📦 Total files across all directories: ${allFiles.length}`);
-  return allFiles.sort();
+  return allFiles.sort((a, b) =>
+    sortKeyForZoomFile(a) < sortKeyForZoomFile(b) ? -1 : 1
+  );
 };
 
 const groupFilesInOrder = (
@@ -1470,27 +1633,85 @@ const groupFilesInOrder = (
   participantCount: number
 ): string[][] => {
   const groups: string[][] = [];
-
   for (let i = 0; i < files.length; i += participantCount) {
-    const group = files.slice(i, i + participantCount);
-    groups.push(group);
+    groups.push(files.slice(i, i + participantCount));
   }
-
-  console.log(
-    `📊 Grouped ${files.length} files into ${groups.length} sessions`
-  );
-  groups.forEach((group, index) => {
-    console.log(`   Session ${index + 1}: ${group.length} files`);
-    group.forEach((file) => {
-      const timestamp = extractTimestampFromS3Key(file);
-      console.log(
-        `      - ${file.split("/").pop()} (${timestamp?.toISOString()})`
-      );
-    });
-  });
-
   return groups;
 };
+
+// -----------------------------
+// ✅ Redis Root Tracking (NEW)
+// -----------------------------
+interface WebhookRoot {
+  meetingName: string;
+  bucket: string;
+  basePath: string;
+  y: number;
+  mo: number;
+  d: number;
+  uuid: string;
+  tail: string;
+  lastUpdated: number;
+}
+
+async function storeWebhookRoot(
+  meetingName: string,
+  bucket: string,
+  key: string
+) {
+  const info = extractByosInfoFromKey(key);
+  if (!info) {
+    throw new Error(`Cannot parse BYOS key: ${key}`);
+  }
+
+  const redisKey = `webhook:root:${meetingName}`;
+
+  const data: WebhookRoot = {
+    meetingName,
+    bucket,
+    basePath: info.basePath,
+    y: info.y,
+    mo: info.mo,
+    d: info.d,
+    uuid: info.uuid,
+    tail: info.tail,
+    lastUpdated: Date.now(),
+  };
+
+  await recordingQueue.client.setex(redisKey, 172800, JSON.stringify(data));
+  console.log(
+    `💾 Stored webhook root for ${meetingName}: ${info.basePath}/${
+      info.y
+    }/${pad2(info.mo)}/${pad2(info.d)}/${info.uuid}/${info.tail}`
+  );
+  return data;
+}
+
+async function getExpandedDirectoriesFromRoot(meetingName: string): Promise<{
+  bucket: string;
+  directories: string[];
+}> {
+  const rootKey = `webhook:root:${meetingName}`;
+  const raw = await recordingQueue.client.get(rootKey);
+  if (!raw) throw new Error(`No webhook root stored for ${meetingName}`);
+
+  const root: WebhookRoot = JSON.parse(raw);
+
+  const dirs = [-1, 0, 1].map((delta) => {
+    const shifted = shiftUtcYmd(root.y, root.mo, root.d, delta);
+    return buildByosPrefix(
+      root.basePath,
+      shifted.y,
+      shifted.mo,
+      shifted.d,
+      root.uuid,
+      root.tail
+    );
+  });
+
+  const directories = Array.from(new Set(dirs));
+  return { bucket: root.bucket, directories };
+}
 
 interface WebhookDirectories {
   meetingName: string;
@@ -1666,6 +1887,164 @@ export const transcriptQueue = new Queue("transcript-processing", {
   },
 });
 
+// export const handleZoomWebhook: RequestHandler = async (req, res) => {
+//   try {
+//     const { event, payload } = req.body;
+
+//     if (event === "endpoint.url_validation") {
+//       const plainToken = payload?.plainToken;
+//       if (plainToken) {
+//         const crypto = require("crypto");
+//         const hash = crypto
+//           .createHmac("sha256", process.env.ZOOM_WEBHOOK_SECRET_TOKEN || "")
+//           .update(plainToken)
+//           .digest("hex");
+
+//         return res.status(200).json({
+//           plainToken: plainToken,
+//           encryptedToken: hash,
+//         });
+//       }
+//     }
+
+//     if (event !== "session.recording_completed") {
+//       return res.status(200).json({ message: "Event ignored", event });
+//     }
+
+//     const meetingName = payload?.object?.session_name;
+//     const participantAudioFiles = payload?.object?.participant_audio_files;
+
+//     if (
+//       !meetingName ||
+//       !participantAudioFiles ||
+//       participantAudioFiles.length === 0
+//     ) {
+//       return res.status(400).json({ message: "Invalid payload" });
+//     }
+
+//     console.log("🔍 WEBHOOK RECEIVED");
+//     console.log(`   Meeting: ${meetingName}`);
+//     console.log(`   Files reported: ${participantAudioFiles.length}`);
+
+//     const firstFile = participantAudioFiles[0];
+//     const parsed = parseS3Url(firstFile.external_storage_url);
+
+//     if (!parsed) {
+//       console.error("❌ Could not parse S3 URL");
+//       return res.status(400).json({ message: "Invalid S3 URL" });
+//     }
+
+//     const s3Directory = parsed.key.substring(
+//       0,
+//       parsed.key.lastIndexOf("/") + 1
+//     );
+
+//     console.log(`📁 S3 Directory: ${parsed.bucket}/${s3Directory}`);
+
+//     const allDirectories = await storeWebhookDirectory(
+//       meetingName,
+//       parsed.bucket,
+//       s3Directory
+//     );
+
+//     const allZoomUsers = await storeZoomUserMapping(
+//       meetingName,
+//       participantAudioFiles
+//     );
+
+//     const pendingSessions = await prisma.recordingSession.findMany({
+//       where: {
+//         meetingName,
+//         status: {
+//           in: ["incomplete", "interrupted"],
+//         },
+//       },
+//       orderBy: { recordingNumber: "asc" },
+//     });
+
+//     if (pendingSessions.length === 0) {
+//       console.log("✅ No pending sessions - all recordings already processed");
+//       return res.status(200).json({
+//         message: "No pending sessions to process",
+//       });
+//     }
+
+//     console.log(
+//       `💾 Found ${pendingSessions.length} pending sessions in database`
+//     );
+//     pendingSessions.forEach((session) => {
+//       console.log(`   - Session ${session.recordingNumber}: ${session.status}`);
+//     });
+
+//     const participantCount = pendingSessions[0]?.participantCount || 2;
+
+//     const expectedTotalFiles = pendingSessions.length * participantCount;
+
+//     const incompleteCount = pendingSessions.filter(
+//       (s) => s.status === "incomplete"
+//     ).length;
+//     const interruptedCount = pendingSessions.filter(
+//       (s) => s.status === "interrupted"
+//     ).length;
+
+//     console.log(`📊 Expected: ${expectedTotalFiles} files total`);
+//     console.log(`   - ${incompleteCount} incomplete sessions (will be saved)`);
+//     console.log(
+//       `   - ${interruptedCount} interrupted sessions (will be deleted)`
+//     );
+//     console.log(`   - ${participantCount} participants per session`);
+
+//     const existingJobs = await recordingQueue.getJobs([
+//       "waiting",
+//       "delayed",
+//       "active",
+//     ]);
+
+//     for (const job of existingJobs) {
+//       if (job.data.meetingName === meetingName) {
+//         console.log(`🗑️ Removing old job: ${job.id}`);
+//         await job.remove();
+//       }
+//     }
+
+//     await recordingQueue.add(
+//       "process-meeting",
+//       {
+//         meetingName,
+//         bucket: parsed.bucket,
+//         directories: allDirectories,
+//       },
+//       {
+//         jobId: `${meetingName}-${Date.now()}`,
+//         delay: 30000, // Reduce from 2 minutes to 30 seconds
+//       }
+//     );
+
+//     console.log(
+//       `✅ Queued processing job with ${allDirectories.length} directories`
+//     );
+
+//     return res.status(200).json({
+//       success: true,
+//       message: "Processing queued",
+//       pendingSessions: pendingSessions.length,
+//       directories: allDirectories.length,
+//       zoomUsers: allZoomUsers.length,
+//     });
+//   } catch (error) {
+//     console.error("Webhook error:", error);
+//     return res.status(500).json({ message: "Internal server error" });
+//   }
+// };
+
+// -----------------------------
+// ✅ Zoom file mapping (keep yours)
+// (Paste your existing storeZoomUserMapping() here unchanged)
+// -----------------------------
+
+// -----------------------------
+// ✅ Webhook Handler (UPDATED)
+// -----------------------------
 export const handleZoomWebhook: RequestHandler = async (req, res) => {
   try {
     const { event, payload } = req.body;
@@ -1713,18 +2092,7 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
       return res.status(400).json({ message: "Invalid S3 URL" });
     }
 
-    const s3Directory = parsed.key.substring(
-      0,
-      parsed.key.lastIndexOf("/") + 1
-    );
-
-    console.log(`📁 S3 Directory: ${parsed.bucket}/${s3Directory}`);
-
-    const allDirectories = await storeWebhookDirectory(
-      meetingName,
-      parsed.bucket,
-      s3Directory
-    );
+    await storeWebhookRoot(meetingName, parsed.bucket, parsed.key);
 
     const allZoomUsers = await storeZoomUserMapping(
       meetingName,
@@ -1748,66 +2116,23 @@ export const handleZoomWebhook: RequestHandler = async (req, res) => {
       });
     }
 
-    console.log(
-      `💾 Found ${pendingSessions.length} pending sessions in database`
-    );
-    pendingSessions.forEach((session) => {
-      console.log(`   - Session ${session.recordingNumber}: ${session.status}`);
-    });
-
-    const participantCount = pendingSessions[0]?.participantCount || 2;
-
-    const expectedTotalFiles = pendingSessions.length * participantCount;
-
-    const incompleteCount = pendingSessions.filter(
-      (s) => s.status === "incomplete"
-    ).length;
-    const interruptedCount = pendingSessions.filter(
-      (s) => s.status === "interrupted"
-    ).length;
-
-    console.log(`📊 Expected: ${expectedTotalFiles} files total`);
-    console.log(`   - ${incompleteCount} incomplete sessions (will be saved)`);
-    console.log(
-      `   - ${interruptedCount} interrupted sessions (will be deleted)`
-    );
-    console.log(`   - ${participantCount} participants per session`);
-
-    const existingJobs = await recordingQueue.getJobs([
-      "waiting",
-      "delayed",
-      "active",
-    ]);
-
-    for (const job of existingJobs) {
-      if (job.data.meetingName === meetingName) {
-        console.log(`🗑️ Removing old job: ${job.id}`);
-        await job.remove();
-      }
-    }
-
     await recordingQueue.add(
       "process-meeting",
+      { meetingName },
       {
-        meetingName,
-        bucket: parsed.bucket,
-        directories: allDirectories,
-      },
-      {
-        jobId: `${meetingName}-${Date.now()}`,
-        delay: 30000, // Reduce from 2 minutes to 30 seconds
+        jobId: `process-meeting:${meetingName}`,
+        delay: 30000,
+        removeOnComplete: true,
+        removeOnFail: false,
       }
     );
 
-    console.log(
-      `✅ Queued processing job with ${allDirectories.length} directories`
-    );
+    console.log(`✅ Queued processing job (stable) for ${meetingName}`);
 
     return res.status(200).json({
       success: true,
       message: "Processing queued",
       pendingSessions: pendingSessions.length,
-      directories: allDirectories.length,
       zoomUsers: allZoomUsers.length,
     });
   } catch (error) {
@@ -1860,166 +2185,140 @@ function calculateAge(dateOfBirth: string) {
   return age;
 }
 
-function slugify(input: string) {
-  return input
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+async function acquireLock(
+  client: any,
+  key: string,
+  ttlSeconds: number
+): Promise<boolean> {
+  try {
+    // node-redis v4
+    const res = await client.set(key, "1", { NX: true, EX: ttlSeconds });
+    return res === "OK";
+  } catch {
+    // ioredis
+    const res = await client.set(key, "1", "EX", ttlSeconds, "NX");
+    return res === "OK";
+  }
 }
 
-const pad = (n: number, w = 2) => n.toString().padStart(w, "0");
-
-function getLATimeParts(date: Date) {
-  const la = new Date(
-    date.toLocaleString("en-US", {
-      timeZone: "America/Los_Angeles",
-    })
-  );
-
-  return {
-    date: `${la.getFullYear()}-${pad(la.getMonth() + 1)}-${pad(la.getDate())}`,
-    time: `${pad(la.getHours())}-${pad(la.getMinutes())}-${pad(
-      la.getSeconds()
-    )}-${pad(la.getMilliseconds(), 3)}`,
-  };
-}
-
-function buildSessionHash(meetingName: string, sessionId: number) {
-  return createHash("sha1")
-    .update(`${meetingName}:${sessionId}`)
-    .digest("hex")
-    .slice(0, 8);
-}
-
+// -----------------------------
+// ✅ Processor (UPDATED)
+// - Expands directories D-1/D/D+1 from UUID root
+// - Uses a Redis lock to prevent double-processing
+// -----------------------------
 recordingQueue.process("process-meeting", async (job: any) => {
-  const { meetingName, bucket, directories } = job.data;
+  const { meetingName } = job.data;
 
-  console.log(`📥 Processing meeting: ${meetingName}`);
-  console.log(`   Attempt: ${job.attemptsMade + 1}`);
-  console.log(`   Directories: ${directories.length}`);
-  directories.forEach((dir: string, i: number) => {
-    console.log(`      ${i + 1}. ${dir}`);
-  });
-
-  const meeting = await prisma.meeting.findUnique({
-    where: { sessionName: meetingName },
-    include: {
-      participants: true,
-    },
-  });
-
-  const dialects = meeting.participants.map((p) => p.dialect || "Unknown");
-
-  const zoomFilesKey = `webhook:zoom:files:${meetingName}`;
-  const zoomFilesData = await recordingQueue.client.get(zoomFilesKey);
-
-  let fileMappings: ZoomFileMapping[] = [];
-
-  if (zoomFilesData) {
-    const parsed: WebhookZoomFiles = JSON.parse(zoomFilesData);
-    fileMappings = parsed.fileMappings;
-  } else {
-    console.warn(`⚠️ No file mappings found for meeting ${meetingName}`);
+  const lockKey = `lock:process-meeting:${meetingName}`;
+  const gotLock = await acquireLock(recordingQueue.client, lockKey, 600);
+  if (!gotLock) {
+    console.log(`🔒 Already processing ${meetingName}, skipping this run`);
+    return { skipped: true };
   }
 
-  const pendingSessions = await prisma.recordingSession.findMany({
-    where: {
-      meetingName,
-      status: {
-        in: ["incomplete", "interrupted"],
+  if (!gotLock) {
+    console.log(`🔒 Already processing ${meetingName}, skipping this run`);
+    return { skipped: true };
+  }
+
+  try {
+    const { bucket, directories } = await getExpandedDirectoriesFromRoot(
+      meetingName
+    );
+
+    console.log(`📥 Processing meeting: ${meetingName}`);
+    console.log(`   Attempt: ${job.attemptsMade + 1}`);
+    console.log(`   Directories: ${directories.length}`);
+    directories.forEach((dir, i) => console.log(`      ${i + 1}. ${dir}`));
+
+    const meeting = await prisma.meeting.findUnique({
+      where: { sessionName: meetingName },
+      include: { participants: true },
+    });
+
+    if (!meeting) {
+      throw new Error(`Meeting not found in DB for sessionName=${meetingName}`);
+    }
+
+    const dialects = meeting.participants.map((p) => p.dialect || "Unknown");
+
+    const zoomFilesKey = `webhook:zoom:files:${meetingName}`;
+    const zoomFilesData = await recordingQueue.client.get(zoomFilesKey);
+
+    let fileMappings: ZoomFileMapping[] = [];
+    if (zoomFilesData) {
+      const parsed: WebhookZoomFiles = JSON.parse(zoomFilesData);
+      fileMappings = parsed.fileMappings;
+    } else {
+      console.warn(`⚠️ No file mappings found for meeting ${meetingName}`);
+    }
+
+    const pendingSessions = await prisma.recordingSession.findMany({
+      where: {
+        meetingName,
+        status: { in: ["incomplete", "interrupted"] },
       },
-    },
-    orderBy: { recordingNumber: "asc" },
-  });
+      orderBy: { recordingNumber: "asc" },
+    });
 
-  if (pendingSessions.length === 0) {
-    console.log("✅ No pending sessions found - all already processed");
+    if (pendingSessions.length === 0) {
+      console.log("✅ No pending sessions found - all already processed");
+      await recordingQueue.client.del(`webhook:root:${meetingName}`);
+      await recordingQueue.client.del(zoomFilesKey);
+      return {
+        success: true,
+        message: "All sessions already processed",
+        sessionsProcessed: 0,
+        sessionsDeleted: 0,
+      };
+    }
 
-    await recordingQueue.client.del(`webhook:directories:${meetingName}`);
+    const participantCount = pendingSessions[0]?.participantCount || 2;
+    const expectedTotalFiles = pendingSessions.length * participantCount;
 
-    return {
-      success: true,
-      message: "All sessions already processed",
-      sessionsProcessed: 0,
-      sessionsDeleted: 0,
-    };
-  }
-
-  console.log(`💾 Found ${pendingSessions.length} pending sessions`);
-  pendingSessions.forEach((session) => {
-    console.log(`   - Session ${session.recordingNumber}: ${session.status}`);
-  });
-
-  const participantCount = pendingSessions[0]?.participantCount || 2;
-
-  const expectedTotalFiles = pendingSessions.length * participantCount;
-
-  const incompleteCount = pendingSessions.filter(
-    (s) => s.status === "incomplete"
-  ).length;
-  const interruptedCount = pendingSessions.filter(
-    (s) => s.status === "interrupted"
-  ).length;
-
-  console.log(`📊 Expected: ${expectedTotalFiles} files total`);
-  console.log(
-    `   - ${incompleteCount} incomplete sessions × ${participantCount} = ${
-      incompleteCount * participantCount
-    } files to save`
-  );
-  console.log(
-    `   - ${interruptedCount} interrupted sessions × ${participantCount} = ${
-      interruptedCount * participantCount
-    } files to delete`
-  );
-
-  const allFiles = await getAllFilesFromMultipleDirectories(
-    bucket,
-    directories
-  );
-
-  console.log(`📦 Files in S3: ${allFiles.length}/${expectedTotalFiles}`);
-
-  if (allFiles.length < expectedTotalFiles) {
-    const missing = expectedTotalFiles - allFiles.length;
-    console.log(`⏳ Waiting for ${missing} more file(s)...`);
-    throw new Error(
-      `Incomplete: ${allFiles.length}/${expectedTotalFiles} files ready`
-    );
-  }
-
-  console.log(`✅ All ${expectedTotalFiles} files are ready!`);
-
-  const fileGroups = groupFilesInOrder(allFiles, participantCount);
-
-  let processedCount = 0;
-  let deletedCount = 0;
-
-  for (let i = 0; i < pendingSessions.length; i++) {
-    const session = pendingSessions[i];
-    const files = fileGroups[i] || [];
-
-    console.log(
-      `📦 Processing session ${session.recordingNumber} (${session.status})`
+    const allFiles = await getAllFilesFromMultipleDirectories(
+      bucket,
+      directories
     );
 
-    if (session.status === "interrupted") {
+    console.log(`📦 Files in S3: ${allFiles.length}/${expectedTotalFiles}`);
+
+    if (allFiles.length < expectedTotalFiles) {
+      const missing = expectedTotalFiles - allFiles.length;
+      console.log(`⏳ Waiting for ${missing} more file(s)...`);
+      throw new Error(
+        `Incomplete: ${allFiles.length}/${expectedTotalFiles} files ready`
+      );
+    }
+
+    console.log(`✅ All ${expectedTotalFiles} files are ready!`);
+
+    const fileGroups = groupFilesInOrder(allFiles, participantCount);
+
+    let processedCount = 0;
+    let deletedCount = 0;
+
+    for (let i = 0; i < pendingSessions.length; i++) {
+      const session = pendingSessions[i];
+      const files = fileGroups[i] || [];
+
       console.log(
-        `🗑️ Deleting interrupted recording ${session.recordingNumber}`
+        `📦 Processing session ${session.recordingNumber} (${session.status})`
       );
 
-      if (files.length > 0) {
+      if (session.status === "interrupted") {
+        console.log(
+          `🗑️ Deleting interrupted recording ${session.recordingNumber}`
+        );
+
         for (const s3Key of files) {
           try {
             await s3Client.send(
               new HeadObjectCommand({ Bucket: bucket, Key: s3Key })
             );
-
             await s3Client.send(
               new DeleteObjectCommand({ Bucket: bucket, Key: s3Key })
             );
-
             console.log(`✅ Deleted: ${s3Key.split("/").pop()}`);
           } catch (error: any) {
             if (error.name === "NoSuchKey" || error.Code === "NoSuchKey") {
@@ -2029,186 +2328,464 @@ recordingQueue.process("process-meeting", async (job: any) => {
             }
           }
         }
-      }
 
-      await prisma.recordingSession.update({
-        where: { id: session.id },
-        data: { status: "deleted" },
-      });
+        await prisma.recordingSession.update({
+          where: { id: session.id },
+          data: { status: "deleted" },
+        });
 
-      console.log(`✅ Session ${session.recordingNumber} marked as deleted`);
-      deletedCount++;
-      continue;
-    }
-
-    if (session.status === "incomplete") {
-      if (files.length === 0) {
-        console.warn(
-          `⚠️ No files for session ${session.recordingNumber} - skipping`
-        );
+        deletedCount++;
         continue;
       }
 
-      console.log(`📦 Organizing session ${session.recordingNumber}`);
-      console.log(`   Files: ${files.length}`);
-
-      const meetings_date = meeting.createdAt
-        .toLocaleString("en-CA", {
-          timeZone: "America/Los_Angeles",
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-        })
-        .replace(/,/g, "")
-        .replace(/\s+/g, "-")
-        .toLowerCase();
-
-      const timestamp = meeting.createdAt.getTime();
-
-      const folder_name = `${meetings_date}/${meeting.createdAt
-        .toLocaleString("en-CA", {
-          timeZone: "America/Los_Angeles",
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-          hour: "2-digit",
-          minute: "2-digit",
-          hour12: true,
-        })
-        .replace(/,/g, "")
-        .replace(/\s+/g, "-")
-        .toLowerCase()}-${timestamp}`;
-
-      for (const s3Key of files) {
-        const participantMatch = s3Key.match(/separate(\d+)/);
-        const participantNumber = participantMatch ? participantMatch[1] : "1";
-
-        const timestampMatch = s3Key.match(/GMT(\d{8}-\d{6})/);
-        const timestamp = timestampMatch ? timestampMatch[1] : "";
-
-        const matchedMapping = fileMappings.find(
-          (mapping) =>
-            mapping.timestamp === timestamp &&
-            mapping.separateNumber === participantNumber
-        );
-
-        let username: string | null = null;
-
-        if (matchedMapping) {
-          username = matchedMapping.username;
-          console.log(
-            `✅ Matched file: separate${participantNumber} → User ${username}`
-          );
-        } else {
+      if (session.status === "incomplete") {
+        if (files.length === 0) {
           console.warn(
-            `⚠️ Could not match file separate${participantNumber} (timestamp: ${timestamp}) to Zoom user`
+            `⚠️ No files for session ${session.recordingNumber} - skipping`
           );
+          continue;
         }
 
-        const newKey = `${meeting.language}/${folder_name}/recording-${session.recordingNumber}/participant-${participantNumber}.m4a`;
-
-        console.log(
-          `   ${s3Key.split("/").pop()} → recording-${
-            session.recordingNumber
-          }/participant-${participantNumber}.m4a`
-        );
-
-        await s3Client.send(
-          new CopyObjectCommand({
-            Bucket: bucket,
-            CopySource: encodeURIComponent(`${bucket}/${s3Key}`),
-            Key: newKey,
+        const meetings_date = meeting.createdAt
+          .toLocaleString("en-CA", {
+            timeZone: "America/Los_Angeles",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
           })
-        );
+          .replace(/,/g, "")
+          .replace(/\s+/g, "-")
+          .toLowerCase();
 
-        await s3Client.send(
-          new DeleteObjectCommand({ Bucket: bucket, Key: s3Key })
-        );
+        const ts = meeting.createdAt.getTime();
 
-        let dbUserId: number | null = null;
+        const folder_name = `${meetings_date}/${meeting.createdAt
+          .toLocaleString("en-CA", {
+            timeZone: "America/Los_Angeles",
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+          })
+          .replace(/,/g, "")
+          .replace(/\s+/g, "-")
+          .toLowerCase()}-${ts}`;
 
-        if (username) {
-          dbUserId = await mapZoomUserToDbUser(username);
+        for (const s3Key of files) {
+          const participantMatch = s3Key.match(/separate(\d+)/);
+          const participantNumber = participantMatch
+            ? participantMatch[1]
+            : "1";
+
+          const timestampMatch = s3Key.match(/GMT(\d{8}-\d{6})/);
+          const timestamp = timestampMatch ? timestampMatch[1] : "";
+
+          const matchedMapping = fileMappings.find(
+            (m) =>
+              m.timestamp === timestamp &&
+              m.separateNumber === participantNumber
+          );
+
+          let username: string | null = null;
+          if (matchedMapping) username = matchedMapping.username;
+
+          const newKey = `${meeting.language}/${folder_name}/recording-${session.recordingNumber}/participant-${participantNumber}.m4a`;
+
+          await s3Client.send(
+            new CopyObjectCommand({
+              Bucket: bucket,
+              CopySource: encodeURIComponent(`${bucket}/${s3Key}`),
+              Key: newKey,
+            })
+          );
+
+          await s3Client.send(
+            new DeleteObjectCommand({ Bucket: bucket, Key: s3Key })
+          );
+
+          let dbUserId: number | null = null;
+          if (username) dbUserId = await mapZoomUserToDbUser(username);
+
+          const extractedTimestamp = extractTimestampFromS3Key(s3Key);
+
+          const recording = await prisma.recording.create({
+            data: {
+              meetingName,
+              recordingNumber: session.recordingNumber,
+              participantNumber: parseInt(participantNumber),
+              recordingStartTime:
+                extractedTimestamp || new Date(session.recordingStartTime),
+              s3Key: newKey,
+              s3Url: `https://${bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${newKey}`,
+              status: "completed",
+              userId: dbUserId,
+            },
+          });
+
+          await prisma.conversation.create({
+            data: {
+              meetingId: meeting.id,
+              userId: dbUserId,
+              recordingId: recording.id,
+              participantDialects: dialects,
+              duration: 0.0,
+              quality: 0.0,
+              earnings: 0.0,
+              status: "incomplete",
+              notes: `Conversation recording ${session.recordingNumber}`,
+              startTime: session.recordingStartTime,
+              endTime: session.recordingEndTime || new Date(),
+            },
+          });
         }
 
-        const extractedTimestamp = extractTimestampFromS3Key(s3Key);
-
-        const recording = await prisma.recording.create({
+        await prisma.recordingSession.update({
+          where: { id: session.id },
           data: {
-            meetingName,
-            recordingNumber: session.recordingNumber,
-            participantNumber: parseInt(participantNumber),
-            recordingStartTime:
-              extractedTimestamp || new Date(session.recordingStartTime),
-            s3Key: newKey,
-            s3Url: `https://${bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${newKey}`,
             status: "completed",
-            userId: dbUserId,
+            isRecording: false,
+            recordingEndTime: new Date(),
           },
         });
 
-        const conversation = await prisma.conversation.create({
-          data: {
-            meetingId: meeting.id,
-            userId: dbUserId,
-            recordingId: recording.id,
-            participantDialects: dialects,
-            duration: 0.0,
-            quality: 0.0,
-            earnings: 0.0,
-            status: "incomplete",
-            notes: `Conversation recording ${session.recordingNumber}`,
-            startTime: session.recordingStartTime,
-            endTime: session.recordingEndTime || new Date(),
-          },
-        });
-
-        console.log(`✅ Saved to database`);
+        processedCount++;
       }
-
-      await prisma.recordingSession.update({
-        where: { id: session.id },
-        data: { status: "completed" },
-      });
-
-      console.log(`✅ Session ${session.recordingNumber} completed`);
-
-      // await transcriptQueue.add(
-      //   "process-transcripts",
-      //   {
-      //     meetingName: meetingName,
-      //     recordingNumber: session.recordingNumber,
-      //     folder_name: folder_name,
-      //     sessionId: session.id,
-      //   },
-      //   {
-      //     jobId: `transcript-${meetingName}-${session.recordingNumber}`,
-      //     priority: 1,
-      //   }
-      // );
-
-      // console.log(
-      //   `🎯 Queued transcript processing for session ${session.recordingNumber}`
-      // );
-
-      processedCount++;
     }
+
+    await recordingQueue.client.del(`webhook:root:${meetingName}`);
+    await recordingQueue.client.del(zoomFilesKey);
+
+    return {
+      success: true,
+      sessionsProcessed: processedCount,
+      sessionsDeleted: deletedCount,
+      totalFiles: expectedTotalFiles,
+      directoriesProcessed: directories.length,
+    };
+  } finally {
+    await recordingQueue.client.del(lockKey);
   }
-
-  await recordingQueue.client.del(`webhook:directories:${meetingName}`);
-  await recordingQueue.client.del(zoomFilesKey);
-  console.log(`🗑️ Cleaned up webhook data`);
-
-  await prisma.$disconnect();
-
-  return {
-    success: true,
-    sessionsProcessed: processedCount,
-    sessionsDeleted: deletedCount,
-    totalFiles: allFiles.length,
-    directoriesProcessed: directories.length,
-  };
 });
+
+// recordingQueue.process("process-meeting", async (job: any) => {
+//   const { meetingName, bucket, directories } = job.data;
+
+//   console.log(`📥 Processing meeting: ${meetingName}`);
+//   console.log(`   Attempt: ${job.attemptsMade + 1}`);
+//   console.log(`   Directories: ${directories.length}`);
+//   directories.forEach((dir: string, i: number) => {
+//     console.log(`      ${i + 1}. ${dir}`);
+//   });
+
+//   const meeting = await prisma.meeting.findUnique({
+//     where: { sessionName: meetingName },
+//     include: {
+//       participants: true,
+//     },
+//   });
+
+//   const dialects = meeting.participants.map((p) => p.dialect || "Unknown");
+
+//   const zoomFilesKey = `webhook:zoom:files:${meetingName}`;
+//   const zoomFilesData = await recordingQueue.client.get(zoomFilesKey);
+
+//   let fileMappings: ZoomFileMapping[] = [];
+
+//   if (zoomFilesData) {
+//     const parsed: WebhookZoomFiles = JSON.parse(zoomFilesData);
+//     fileMappings = parsed.fileMappings;
+//   } else {
+//     console.warn(`⚠️ No file mappings found for meeting ${meetingName}`);
+//   }
+
+//   const pendingSessions = await prisma.recordingSession.findMany({
+//     where: {
+//       meetingName,
+//       status: {
+//         in: ["incomplete", "interrupted"],
+//       },
+//     },
+//     orderBy: { recordingNumber: "asc" },
+//   });
+
+//   if (pendingSessions.length === 0) {
+//     console.log("✅ No pending sessions found - all already processed");
+
+//     await recordingQueue.client.del(`webhook:directories:${meetingName}`);
+
+//     return {
+//       success: true,
+//       message: "All sessions already processed",
+//       sessionsProcessed: 0,
+//       sessionsDeleted: 0,
+//     };
+//   }
+
+//   console.log(`💾 Found ${pendingSessions.length} pending sessions`);
+//   pendingSessions.forEach((session) => {
+//     console.log(`   - Session ${session.recordingNumber}: ${session.status}`);
+//   });
+
+//   const participantCount = pendingSessions[0]?.participantCount || 2;
+
+//   const expectedTotalFiles = pendingSessions.length * participantCount;
+
+//   const incompleteCount = pendingSessions.filter(
+//     (s) => s.status === "incomplete"
+//   ).length;
+//   const interruptedCount = pendingSessions.filter(
+//     (s) => s.status === "interrupted"
+//   ).length;
+
+//   console.log(`📊 Expected: ${expectedTotalFiles} files total`);
+//   console.log(
+//     `   - ${incompleteCount} incomplete sessions × ${participantCount} = ${
+//       incompleteCount * participantCount
+//     } files to save`
+//   );
+//   console.log(
+//     `   - ${interruptedCount} interrupted sessions × ${participantCount} = ${
+//       interruptedCount * participantCount
+//     } files to delete`
+//   );
+
+//   const allFiles = await getAllFilesFromMultipleDirectories(
+//     bucket,
+//     directories
+//   );
+
+//   console.log(`📦 Files in S3: ${allFiles.length}/${expectedTotalFiles}`);
+
+//   if (allFiles.length < expectedTotalFiles) {
+//     const missing = expectedTotalFiles - allFiles.length;
+//     console.log(`⏳ Waiting for ${missing} more file(s)...`);
+//     throw new Error(
+//       `Incomplete: ${allFiles.length}/${expectedTotalFiles} files ready`
+//     );
+//   }
+
+//   console.log(`✅ All ${expectedTotalFiles} files are ready!`);
+
+//   const fileGroups = groupFilesInOrder(allFiles, participantCount);
+
+//   let processedCount = 0;
+//   let deletedCount = 0;
+
+//   for (let i = 0; i < pendingSessions.length; i++) {
+//     const session = pendingSessions[i];
+//     const files = fileGroups[i] || [];
+
+//     console.log(
+//       `📦 Processing session ${session.recordingNumber} (${session.status})`
+//     );
+
+//     if (session.status === "interrupted") {
+//       console.log(
+//         `🗑️ Deleting interrupted recording ${session.recordingNumber}`
+//       );
+
+//       if (files.length > 0) {
+//         for (const s3Key of files) {
+//           try {
+//             await s3Client.send(
+//               new HeadObjectCommand({ Bucket: bucket, Key: s3Key })
+//             );
+
+//             await s3Client.send(
+//               new DeleteObjectCommand({ Bucket: bucket, Key: s3Key })
+//             );
+
+//             console.log(`✅ Deleted: ${s3Key.split("/").pop()}`);
+//           } catch (error: any) {
+//             if (error.name === "NoSuchKey" || error.Code === "NoSuchKey") {
+//               console.log(`⏭️ Already deleted: ${s3Key.split("/").pop()}`);
+//             } else {
+//               throw error;
+//             }
+//           }
+//         }
+//       }
+
+//       await prisma.recordingSession.update({
+//         where: { id: session.id },
+//         data: { status: "deleted" },
+//       });
+
+//       console.log(`✅ Session ${session.recordingNumber} marked as deleted`);
+//       deletedCount++;
+//       continue;
+//     }
+
+//     if (session.status === "incomplete") {
+//       if (files.length === 0) {
+//         console.warn(
+//           `⚠️ No files for session ${session.recordingNumber} - skipping`
+//         );
+//         continue;
+//       }
+
+//       console.log(`📦 Organizing session ${session.recordingNumber}`);
+//       console.log(`   Files: ${files.length}`);
+
+//       const meetings_date = meeting.createdAt
+//         .toLocaleString("en-CA", {
+//           timeZone: "America/Los_Angeles",
+//           year: "numeric",
+//           month: "2-digit",
+//           day: "2-digit",
+//         })
+//         .replace(/,/g, "")
+//         .replace(/\s+/g, "-")
+//         .toLowerCase();
+
+//       const timestamp = meeting.createdAt.getTime();
+
+//       const folder_name = `${meetings_date}/${meeting.createdAt
+//         .toLocaleString("en-CA", {
+//           timeZone: "America/Los_Angeles",
+//           year: "numeric",
+//           month: "2-digit",
+//           day: "2-digit",
+//           hour: "2-digit",
+//           minute: "2-digit",
+//           hour12: true,
+//         })
+//         .replace(/,/g, "")
+//         .replace(/\s+/g, "-")
+//         .toLowerCase()}-${timestamp}`;
+
+//       for (const s3Key of files) {
+//         const participantMatch = s3Key.match(/separate(\d+)/);
+//         const participantNumber = participantMatch ? participantMatch[1] : "1";
+
+//         const timestampMatch = s3Key.match(/GMT(\d{8}-\d{6})/);
+//         const timestamp = timestampMatch ? timestampMatch[1] : "";
+
+//         const matchedMapping = fileMappings.find(
+//           (mapping) =>
+//             mapping.timestamp === timestamp &&
+//             mapping.separateNumber === participantNumber
+//         );
+
+//         let username: string | null = null;
+
+//         if (matchedMapping) {
+//           username = matchedMapping.username;
+//           console.log(
+//             `✅ Matched file: separate${participantNumber} → User ${username}`
+//           );
+//         } else {
+//           console.warn(
+//             `⚠️ Could not match file separate${participantNumber} (timestamp: ${timestamp}) to Zoom user`
+//           );
+//         }
+
+//         const newKey = `${meeting.language}/${folder_name}/recording-${session.recordingNumber}/participant-${participantNumber}.m4a`;
+
+//         console.log(
+//           `   ${s3Key.split("/").pop()} → recording-${
+//             session.recordingNumber
+//           }/participant-${participantNumber}.m4a`
+//         );
+
+//         await s3Client.send(
+//           new CopyObjectCommand({
+//             Bucket: bucket,
+//             CopySource: encodeURIComponent(`${bucket}/${s3Key}`),
+//             Key: newKey,
+//           })
+//         );
+
+//         await s3Client.send(
+//           new DeleteObjectCommand({ Bucket: bucket, Key: s3Key })
+//         );
+
+//         let dbUserId: number | null = null;
+
+//         if (username) {
+//           dbUserId = await mapZoomUserToDbUser(username);
+//         }
+
+//         const extractedTimestamp = extractTimestampFromS3Key(s3Key);
+
+//         const recording = await prisma.recording.create({
+//           data: {
+//             meetingName,
+//             recordingNumber: session.recordingNumber,
+//             participantNumber: parseInt(participantNumber),
+//             recordingStartTime:
+//               extractedTimestamp || new Date(session.recordingStartTime),
+//             s3Key: newKey,
+//             s3Url: `https://${bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${newKey}`,
+//             status: "completed",
+//             userId: dbUserId,
+//           },
+//         });
+
+//         const conversation = await prisma.conversation.create({
+//           data: {
+//             meetingId: meeting.id,
+//             userId: dbUserId,
+//             recordingId: recording.id,
+//             participantDialects: dialects,
+//             duration: 0.0,
+//             quality: 0.0,
+//             earnings: 0.0,
+//             status: "incomplete",
+//             notes: `Conversation recording ${session.recordingNumber}`,
+//             startTime: session.recordingStartTime,
+//             endTime: session.recordingEndTime || new Date(),
+//           },
+//         });
+
+//         console.log(`✅ Saved to database`);
+//       }
+
+//       await prisma.recordingSession.update({
+//         where: { id: session.id },
+//         data: { status: "completed" },
+//       });
+
+//       console.log(`✅ Session ${session.recordingNumber} completed`);
+
+//       // await transcriptQueue.add(
+//       //   "process-transcripts",
+//       //   {
+//       //     meetingName: meetingName,
+//       //     recordingNumber: session.recordingNumber,
+//       //     folder_name: folder_name,
+//       //     sessionId: session.id,
+//       //   },
+//       //   {
+//       //     jobId: `transcript-${meetingName}-${session.recordingNumber}`,
+//       //     priority: 1,
+//       //   }
+//       // );
+
+//       // console.log(
+//       //   `🎯 Queued transcript processing for session ${session.recordingNumber}`
+//       // );
+
+//       processedCount++;
+//     }
+//   }
+
+//   await recordingQueue.client.del(`webhook:directories:${meetingName}`);
+//   await recordingQueue.client.del(zoomFilesKey);
+//   console.log(`🗑️ Cleaned up webhook data`);
+
+//   await prisma.$disconnect();
+
+//   return {
+//     success: true,
+//     sessionsProcessed: processedCount,
+//     sessionsDeleted: deletedCount,
+//     totalFiles: allFiles.length,
+//     directoriesProcessed: directories.length,
+//   };
+// });
 
 recordingQueue.on("completed", (job: any, result: any) => {
   console.log(`✅ Job ${job.id} completed:`, result);
