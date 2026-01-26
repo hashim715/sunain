@@ -22,7 +22,7 @@ import { protect } from "../middleware/middleware";
 export const authRouter: Router = express.Router();
 
 authRouter.route("/google").get(googleAuth);
-authRouter.route("/google/callback").post(googleredirectauth);
+// authRouter.route("/google/callback").post(googleredirectauth);
 authRouter.route("/register").post(register);
 authRouter.route("/login").post(login);
 authRouter.route("/verifyEmail").post(verifyEmail);
