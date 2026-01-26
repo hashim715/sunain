@@ -983,130 +983,144 @@ export const getDialectPairs: RequestHandler = async (
   }
 };
 
-export const markRoomsAsPaid: RequestHandler = async (
-  req: Request,
-  res: Response
-) => {
+export const markRoomsAsPaid: RequestHandler = async (req, res) => {
   try {
-    const { user_ids } = req.body;
+    const { items } = req.body as {
+      items: { userId: number | string; roomIds: (number | string)[] }[];
+    };
 
-    if (!user_ids || !Array.isArray(user_ids) || user_ids.length === 0) {
-      return res.status(400).json({ error: "User IDs array is required" });
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: "items is required" });
     }
 
-    const userIdsInt = user_ids.map((id: string) => parseInt(id));
+    const now = new Date();
 
-    const result = await prisma.conversation.updateMany({
-      where: {
-        userId: {
-          in: userIdsInt,
+    const ops = items.map((it) => {
+      const userId = Number(it.userId);
+      const roomIds = (it.roomIds || [])
+        .map(Number)
+        .filter((n) => Number.isFinite(n));
+
+      if (!Number.isFinite(userId) || roomIds.length === 0) {
+        return prisma.conversation.updateMany({ where: { id: -1 }, data: {} });
+      }
+
+      return prisma.conversation.updateMany({
+        where: {
+          userId,
+          meetingId: { in: roomIds },
+          meeting: { language: "Arabic" },
+          user: {
+            language: "Arabic",
+            OR: [
+              {
+                AND: [
+                  { stripeAccountId: { not: null } },
+                  { stripeChargesEnabled: true },
+                  { stripeDetailsSubmitted: true },
+                  { stripeOnboardingComplete: true },
+                  { stripePayoutsEnabled: true },
+                ],
+              },
+              {
+                AND: [
+                  { paypalEmail: { not: null } },
+                  { paypalEmail: { not: "N/A" } },
+                  { paypalEmail: { not: "" } },
+                ],
+              },
+              {
+                AND: [
+                  { wiseEmail: { not: null } },
+                  { wiseEmail: { not: "N/A" } },
+                  { wiseEmail: { not: "" } },
+                ],
+              },
+              {
+                AND: [
+                  { revolutEmail: { not: null } },
+                  { revolutEmail: { not: "N/A" } },
+                  { revolutEmail: { not: "" } },
+                ],
+              },
+              {
+                AND: [
+                  { instaPayEnabled: true },
+                  { instaPayPhone: { not: null } },
+                  { instaPayPhone: { not: "N/A" } },
+                  { instaPayPhone: { not: "" } },
+                ],
+              },
+            ],
+          },
+          flagged_status: false,
+          paymentStatus: "unpaid",
         },
-        user: {
-          language: "Arabic",
-          OR: [
-            {
-              AND: [
-                { stripeAccountId: { not: null } },
-                { stripeChargesEnabled: true },
-                { stripeDetailsSubmitted: true },
-                { stripeOnboardingComplete: true },
-                { stripePayoutsEnabled: true },
-              ],
-            },
-            {
-              AND: [
-                { paypalEmail: { not: null } },
-                { paypalEmail: { not: "N/A" } },
-                { paypalEmail: { not: "" } },
-              ],
-            },
-            {
-              AND: [
-                { wiseEmail: { not: null } },
-                { wiseEmail: { not: "N/A" } },
-                { wiseEmail: { not: "" } },
-              ],
-            },
-            {
-              AND: [
-                { revolutEmail: { not: null } },
-                { revolutEmail: { not: "N/A" } },
-                { revolutEmail: { not: "" } },
-              ],
-            },
-          ],
+        data: {
+          paymentStatus: "paid",
+          paidAt: now,
         },
-        meeting: {
-          language: "Arabic",
-        },
-        flagged_status: false,
-        paymentStatus: "unpaid",
-      },
-      data: {
-        paymentStatus: "paid",
-        paidAt: new Date(),
-      },
+      });
     });
+
+    const results = await prisma.$transaction(ops);
+    const updated_count = results.reduce((sum, r) => sum + r.count, 0);
 
     return res.status(200).json({
       success: true,
-      message: `Marked ${result.count} Arabic conversations as paid for ${user_ids.length} users`,
-      updated_count: result.count,
+      message: `Marked ${updated_count} conversations as paid (room-scoped)`,
+      updated_count,
     });
   } catch (err) {
     logger.error(`Error marking rooms as paid: ${err}`);
-    if (!res.headersSent) {
-      return internalServerError(res);
-    }
-  } finally {
-    await prisma.$disconnect();
+    if (!res.headersSent) return internalServerError(res);
   }
 };
 
-export const undoPayroll: RequestHandler = async (
-  req: Request,
-  res: Response
-) => {
+export const undoPayroll: RequestHandler = async (req, res) => {
   try {
-    const { user_ids } = req.body;
+    const { items } = req.body as {
+      items: { userId: number | string; roomIds: (number | string)[] }[];
+    };
 
-    if (!user_ids || !Array.isArray(user_ids) || user_ids.length === 0) {
-      return res.status(400).json({ error: "User IDs array is required" });
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: "items is required" });
     }
 
-    const userIdsInt = user_ids.map((id: string) => parseInt(id));
+    const ops = items.map((it) => {
+      const userId = Number(it.userId);
+      const roomIds = (it.roomIds || []).map(Number).filter(Number.isFinite);
 
-    const result = await prisma.conversation.updateMany({
-      where: {
-        userId: {
-          in: userIdsInt,
+      if (!Number.isFinite(userId) || roomIds.length === 0) {
+        return prisma.conversation.updateMany({ where: { id: -1 }, data: {} });
+      }
+
+      return prisma.conversation.updateMany({
+        where: {
+          userId,
+          meetingId: { in: roomIds },
+          user: { language: "Arabic" },
+          meeting: { language: "Arabic" },
+          paymentStatus: "paid",
         },
-        user: {
-          language: "Arabic",
+        data: {
+          paymentStatus: "unpaid",
+          paidAt: null,
         },
-        meeting: {
-          language: "Arabic",
-        },
-        paymentStatus: "paid",
-      },
-      data: {
-        paymentStatus: "unpaid",
-        paidAt: null,
-      },
+      });
     });
+
+    const results = await prisma.$transaction(ops);
+    const updated_count = results.reduce((sum, r) => sum + r.count, 0);
 
     return res.status(200).json({
       success: true,
-      message: `Reverted ${result.count} Arabic conversations back to unpaid for ${user_ids.length} users`,
-      updated_count: result.count,
+      message: `Reverted ${updated_count} conversations back to unpaid (room-scoped)`,
+      updated_count,
     });
   } catch (err) {
     logger.error(`Error undoing payroll: ${err}`);
-    if (!res.headersSent) {
-      return internalServerError(res);
-    }
-  } finally {
-    await prisma.$disconnect();
+    if (!res.headersSent) return internalServerError(res);
   }
 };
 
@@ -1721,6 +1735,8 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
     const availableRecordings: string[] = [];
     let skippedNoConversation = 0;
     let skippedTooSmall = 0;
+    let skippedNoMetadata = 0;
+    let skippedNoTranscription = 0;
 
     const MIN_SIZE_BYTES = 900 * 1024;
 
@@ -1765,6 +1781,24 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
           const filesResponse = await s3.send(filesCommand);
           const files = filesResponse.Contents || [];
 
+          const hasTranscription = files.some(
+            (file) =>
+              file.Key?.endsWith("transcription.txt") ||
+              file.Key?.endsWith("Transcription.txt")
+          );
+          if (!hasTranscription) {
+            skippedNoTranscription++;
+            continue;
+          }
+
+          const hasMetadata = files.some((file) =>
+            file.Key?.endsWith("metadata.txt")
+          );
+          if (!hasMetadata) {
+            skippedNoMetadata++;
+            continue;
+          }
+
           const hasAnnotation = files.some((file) =>
             file.Key?.endsWith("human_transcript.txt")
           );
@@ -1798,7 +1832,7 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
     }
 
     logger.info(
-      `Found ${availableRecordings.length} available recordings (skipped ${skippedNoConversation} no mp3, ${skippedTooSmall} too small)`
+      `Found ${availableRecordings.length} available recordings (skipped ${skippedNoConversation} no mp3, ${skippedTooSmall} too small, ${skippedNoMetadata} no metadata, ${skippedNoTranscription} no transcription)`
     );
 
     if (availableRecordings.length === 0) {
@@ -1807,6 +1841,8 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
         details: {
           skippedNoConversation,
           skippedTooSmall,
+          skippedNoMetadata,
+          skippedNoTranscription,
           minSizeRequired: `${MIN_SIZE_BYTES / 1024} KB`,
         },
       });
@@ -1831,6 +1867,8 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
         addedCount: availableRecordings.length,
         skippedNoConversation,
         skippedTooSmall,
+        skippedNoMetadata,
+        skippedNoTranscription,
         minSizeRequired: `${MIN_SIZE_BYTES / 1024} KB`,
       },
     });
@@ -2252,11 +2290,18 @@ export const getPayrollData: RequestHandler = async (
           user.revolutEmail !== "N/A" &&
           user.revolutEmail !== "";
 
+        const hasInstapay =
+          user.instaPayEnabled === true &&
+          user.instaPayPhone &&
+          user.instaPayPhone !== "N/A" &&
+          user.instaPayPhone !== "";
+
         let paymentMethod = null;
         if (hasStripe) paymentMethod = "stripe";
         else if (hasPayPal) paymentMethod = "paypal";
         else if (hasWise) paymentMethod = "wise";
         else if (hasRevolut) paymentMethod = "revolut";
+        else if (hasInstapay) paymentMethod = "instapay"; // ✅ add
 
         return {
           user_id: `${user.id}`,
@@ -2278,6 +2323,8 @@ export const getPayrollData: RequestHandler = async (
           paypalEmail: user.paypalEmail || "N/A",
           wiseEmail: user.wiseEmail || "N/A",
           revolutEmail: user.revolutEmail || "N/A",
+          instaPayPhone: user.instaPayPhone || "N/A",
+          instaPayEnabled: user.instaPayEnabled === true,
           payment_method: paymentMethod,
           flagged_count: flaggedCount,
           room_ids: roomIdsString,

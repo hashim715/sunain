@@ -2173,23 +2173,23 @@ recordingQueue.process("process-meeting", async (job: any) => {
 
       console.log(`✅ Session ${session.recordingNumber} completed`);
 
-      await transcriptQueue.add(
-        "process-transcripts",
-        {
-          meetingName: meetingName,
-          recordingNumber: session.recordingNumber,
-          folder_name: folder_name,
-          sessionId: session.id,
-        },
-        {
-          jobId: `transcript-${meetingName}-${session.recordingNumber}`,
-          priority: 1,
-        }
-      );
+      // await transcriptQueue.add(
+      //   "process-transcripts",
+      //   {
+      //     meetingName: meetingName,
+      //     recordingNumber: session.recordingNumber,
+      //     folder_name: folder_name,
+      //     sessionId: session.id,
+      //   },
+      //   {
+      //     jobId: `transcript-${meetingName}-${session.recordingNumber}`,
+      //     priority: 1,
+      //   }
+      // );
 
-      console.log(
-        `🎯 Queued transcript processing for session ${session.recordingNumber}`
-      );
+      // console.log(
+      //   `🎯 Queued transcript processing for session ${session.recordingNumber}`
+      // );
 
       processedCount++;
     }

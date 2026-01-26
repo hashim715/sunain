@@ -105,7 +105,7 @@ app.use(cors(corsOptions));
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(bodyParser.json());
 
-app.use(timeout("150s"));
+app.use(timeout("200s"));
 
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   if (res.headersSent) {
