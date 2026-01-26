@@ -2331,7 +2331,7 @@ export const getPayrollData: RequestHandler = async (
       })
     );
 
-    const usersWithBalance = formattedUsers.filter((u) => u.total_balance > 0);
+    const usersWithBalance = formattedUsers.filter((u) => u.total_balance > 30);
 
     return res.status(200).json({
       success: true,
