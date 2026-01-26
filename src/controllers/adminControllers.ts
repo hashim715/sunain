@@ -386,7 +386,7 @@ export const getAllRoomsForUser: RequestHandler = async (
     const user = await prisma.user.findFirst({
       where: {
         id: userIdInt,
-        language: "Arabic", // ONLY ARABIC USERS
+        language: "Arabic",
       },
     });
 
@@ -401,7 +401,7 @@ export const getAllRoomsForUser: RequestHandler = async (
       where: {
         userId: user.id,
         meeting: {
-          language: "Arabic", // ONLY ARABIC MEETINGS
+          language: "Arabic",
         },
       },
       include: {
@@ -450,7 +450,7 @@ export const getPaymentRoomsForUser: RequestHandler = async (
     const user = await prisma.user.findFirst({
       where: {
         id: userIdInt,
-        language: "Arabic", // ONLY ARABIC USERS
+        language: "Arabic",
       },
     });
 
@@ -468,7 +468,7 @@ export const getPaymentRoomsForUser: RequestHandler = async (
         flagged_status: false,
         status: "completed",
         meeting: {
-          language: "Arabic", // ONLY ARABIC MEETINGS
+          language: "Arabic",
         },
       },
       include: {
@@ -513,7 +513,7 @@ export const getRoomDetails: RequestHandler = async (
     const meeting = await prisma.meeting.findUnique({
       where: {
         id: parseInt(roomId.split("-")[1]),
-        language: "Arabic", // ONLY ARABIC MEETINGS
+        language: "Arabic",
       },
       include: {
         participants: {
@@ -2188,7 +2188,6 @@ export const getPayrollData: RequestHandler = async (
       where: {
         user_type: "user",
         language: "Arabic",
-        adminVerify: "active",
         conversations: {
           some: {
             paymentStatus: "unpaid",
