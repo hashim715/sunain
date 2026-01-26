@@ -352,7 +352,6 @@ export const joinMeeting: RequestHandler = async (
       },
     });
 
-    // Check if user is currently in the meeting
     if (meetingParticipant && !meetingParticipant.leftAt) {
       return res.status(400).json({
         success: false,
@@ -367,7 +366,6 @@ export const joinMeeting: RequestHandler = async (
       });
     }
 
-    // If participant record exists, update it; otherwise create new
     if (meetingParticipant) {
       await prisma.meetingParticipant.update({
         where: {

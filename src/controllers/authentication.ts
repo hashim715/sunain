@@ -356,7 +356,7 @@ export const register: RequestHandler = async (req: Request, res: Response) => {
       `,
     };
 
-    await email_transporter.sendMail(mailOptions);
+    // await email_transporter.sendMail(mailOptions);
 
     user = await prisma.user.create({
       data: {
