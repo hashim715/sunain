@@ -2211,37 +2211,34 @@ export const getPayrollData: RequestHandler = async (
             paymentStatus: true,
             status: true,
             meetingId: true,
-            meeting: {
-              select: {
-                language: true,
-              },
-            },
+            meeting: { select: { language: true } },
           },
         },
       },
-      orderBy: {
-        createdAt: "desc",
-      },
+      orderBy: { createdAt: "desc" },
     });
 
     const formattedUsers = await Promise.all(
       users.map(async (user) => {
-        const totalBalance = user.conversations.reduce((sum, conv) => {
-          return sum + parseFloat(conv.earnings.toString());
-        }, 0);
+        const numConversations = user.conversations.length;
+
+        const totalBalance = user.conversations.reduce(
+          (sum, conv) => sum + Number(conv.earnings || 0),
+          0
+        );
 
         const totalRecordingMinutes =
-          user.conversations.reduce((sum, conv) => {
-            return sum + Number(conv.duration);
-          }, 0) / 60;
-
-        const numConversations = user.conversations.length;
+          user.conversations.reduce(
+            (sum, conv) => sum + Number(conv.duration || 0),
+            0
+          ) / 60;
 
         const averageQualityScore =
           numConversations > 0
-            ? user.conversations.reduce((sum, conv) => {
-                return sum + parseFloat(conv.quality.toString());
-              }, 0) / numConversations
+            ? user.conversations.reduce(
+                (sum, conv) => sum + Number(conv.quality || 0),
+                0
+              ) / numConversations
             : 0;
 
         const age = user.date_of_birth
@@ -2253,19 +2250,33 @@ export const getPayrollData: RequestHandler = async (
             userId: user.id,
             flagged_status: true,
             status: "completed",
-            meeting: {
-              language: "Arabic",
-            },
+            meeting: { language: "Arabic" },
           },
         });
 
-        const uniqueRoomIds = [
-          ...new Set(user.conversations.map((conv) => conv.meetingId)),
-        ];
-        const roomIdsString =
-          uniqueRoomIds.length > 0
-            ? uniqueRoomIds.map((id) => `Room-${id}`).join(", ")
-            : "N/A";
+        const roomAgg = user.conversations.reduce(
+          (acc, conv) => {
+            const roomId = Number(conv.meetingId);
+            const earnings = Number(conv.earnings || 0);
+            const minutes = Number(conv.duration || 0) / 60;
+
+            if (!Number.isFinite(roomId)) return acc;
+
+            acc.room_amounts[roomId] =
+              (acc.room_amounts[roomId] || 0) + earnings;
+            acc.room_minutes[roomId] =
+              (acc.room_minutes[roomId] || 0) + minutes;
+
+            return acc;
+          },
+          {
+            room_amounts: {} as Record<number, number>,
+            room_minutes: {} as Record<number, number>,
+          }
+        );
+
+        const uniqueRoomIds = Object.keys(roomAgg.room_amounts).map(Number);
+        const roomIdsString = JSON.stringify(uniqueRoomIds);
 
         const hasStripe =
           user.stripeAccountId &&
@@ -2280,53 +2291,60 @@ export const getPayrollData: RequestHandler = async (
           user.paypalEmail &&
           user.paypalEmail !== "N/A" &&
           user.paypalEmail !== "";
-
         const hasWise =
           user.wiseEmail && user.wiseEmail !== "N/A" && user.wiseEmail !== "";
-
         const hasRevolut =
           user.revolutEmail &&
           user.revolutEmail !== "N/A" &&
           user.revolutEmail !== "";
-
         const hasInstapay =
           user.instaPayEnabled === true &&
           user.instaPayPhone &&
           user.instaPayPhone !== "N/A" &&
           user.instaPayPhone !== "";
 
-        let paymentMethod = null;
+        let paymentMethod: any = null;
         if (hasStripe) paymentMethod = "stripe";
         else if (hasPayPal) paymentMethod = "paypal";
         else if (hasWise) paymentMethod = "wise";
         else if (hasRevolut) paymentMethod = "revolut";
-        else if (hasInstapay) paymentMethod = "instapay"; // ✅ add
+        else if (hasInstapay) paymentMethod = "instapay";
 
         return {
-          user_id: `${user.id}`,
+          user_id: String(user.id),
           email: user.email,
           full_name: user.name || "N/A",
-          age: age,
+          age,
           language: user.language || "N/A",
           dialect: user.language_dialect || "N/A",
-          total_recording_minutes: parseFloat(totalRecordingMinutes.toFixed(2)),
+
+          total_recording_minutes: Number(totalRecordingMinutes.toFixed(2)),
           num_conversations: numConversations,
-          total_balance: parseFloat(totalBalance.toFixed(2)),
-          average_quality_score: parseFloat(averageQualityScore.toFixed(2)),
+          total_balance: Number(totalBalance.toFixed(2)),
+          average_quality_score: Number(averageQualityScore.toFixed(2)),
+
           status: user.adminVerify,
+
           stripe_account_id: user.stripeAccountId || "N/A",
           stripeOnboardingComplete: user.stripeOnboardingComplete,
           stripeDetailsSubmitted: user.stripeDetailsSubmitted,
           stripeChargesEnabled: user.stripeChargesEnabled,
           stripePayoutsEnabled: user.stripePayoutsEnabled,
+
           paypalEmail: user.paypalEmail || "N/A",
           wiseEmail: user.wiseEmail || "N/A",
           revolutEmail: user.revolutEmail || "N/A",
+
           instaPayPhone: user.instaPayPhone || "N/A",
           instaPayEnabled: user.instaPayEnabled === true,
+
           payment_method: paymentMethod,
           flagged_count: flaggedCount,
+
           room_ids: roomIdsString,
+
+          room_amounts: roomAgg.room_amounts,
+          room_minutes: roomAgg.room_minutes,
         };
       })
     );
@@ -2340,9 +2358,7 @@ export const getPayrollData: RequestHandler = async (
     });
   } catch (err) {
     logger.error(`Error getting payroll data: ${err}`);
-    if (!res.headersSent) {
-      return internalServerError(res);
-    }
+    if (!res.headersSent) return internalServerError(res);
   } finally {
     await prisma.$disconnect();
   }
