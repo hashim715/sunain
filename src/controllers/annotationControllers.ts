@@ -571,6 +571,13 @@ export const uploadAnnotationFile: RequestHandler = async (req, res) => {
   }
 };
 
+function normalizePath(path: string): string {
+  return path
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/{2,}/g, "/");
+}
+
 export const removeRecordingFromAnnotator: RequestHandler = async (
   req: Request,
   res: Response
@@ -601,8 +608,10 @@ export const removeRecordingFromAnnotator: RequestHandler = async (
         .json({ success: false, message: "User does not exist" });
     }
 
+    const normalizedTarget = normalizePath(recordingPath);
+
     const updatedRecordings = (user.annotation_recordings || []).filter(
-      (path) => path !== recordingPath
+      (path) => normalizePath(path) !== normalizedTarget
     );
 
     await prisma.user.update({
