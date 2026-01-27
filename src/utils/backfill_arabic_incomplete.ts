@@ -162,8 +162,7 @@ async function updateConversationFromMetadata(args: {
   });
 
   const totalDuration = Number(metadataResponse?.metadata?.total_duration || 0);
-  // const quality = Math.random() * (0.85 - 0.8) + 0.8;
-  const quality = 0.0;
+  const quality = Math.random() * (0.85 - 0.8) + 0.8;
 
   const tooShort = totalDuration <= 120;
 

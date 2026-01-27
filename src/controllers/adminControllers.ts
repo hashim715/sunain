@@ -1730,7 +1730,13 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
     const allDates =
       allDatesResponse.CommonPrefixes?.map((prefix) => prefix.Prefix) || [];
 
-    logger.info(`Found ${allDates.length} date folders`);
+    const lastTwoDates = allDates.sort((a, b) => a.localeCompare(b)).slice(-2);
+
+    logger.info(
+      `Found ${
+        allDates.length
+      } date folders, scanning only last 2: ${lastTwoDates.join(", ")}`
+    );
 
     const availableRecordings: string[] = [];
     let skippedNoConversation = 0;
