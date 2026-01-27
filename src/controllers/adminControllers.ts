@@ -1730,12 +1730,12 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
     const allDates =
       allDatesResponse.CommonPrefixes?.map((prefix) => prefix.Prefix) || [];
 
-    const lastTwoDates = allDates.sort((a, b) => a.localeCompare(b)).slice(-2);
+    const lastTwoDates = allDates.sort((a, b) => a.localeCompare(b)).slice(-4);
 
     logger.info(
       `Found ${
         allDates.length
-      } date folders, scanning only last 2: ${lastTwoDates.join(", ")}`
+      } date folders, scanning only last 4: ${lastTwoDates.join(", ")}`
     );
 
     const availableRecordings: string[] = [];
