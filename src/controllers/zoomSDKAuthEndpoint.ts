@@ -2937,7 +2937,7 @@ const processConversation = async (
       where: { id: conversation.id },
       data: {
         // quality: Math.random() * (0.85 - 0.8) + 0.8,
-        quality: null,
+        quality: 0.0,
         duration: totalDuration,
         earnings: calculateEarnings(totalDuration),
         flagged_status: true,
@@ -2950,7 +2950,7 @@ const processConversation = async (
       where: { id: conversation.id },
       data: {
         // quality: Math.random() * (0.85 - 0.8) + 0.8,
-        quality: null,
+        quality: 0.0,
         duration: totalDuration,
         earnings: calculateEarnings(totalDuration),
         flagged_status: false,
