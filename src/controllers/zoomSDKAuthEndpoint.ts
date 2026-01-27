@@ -2191,11 +2191,9 @@ async function acquireLock(
   ttlSeconds: number
 ): Promise<boolean> {
   try {
-    // node-redis v4
     const res = await client.set(key, "1", { NX: true, EX: ttlSeconds });
     return res === "OK";
   } catch {
-    // ioredis
     const res = await client.set(key, "1", "EX", ttlSeconds, "NX");
     return res === "OK";
   }
@@ -2449,6 +2447,24 @@ recordingQueue.process("process-meeting", async (job: any) => {
             recordingEndTime: new Date(),
           },
         });
+
+        await transcriptQueue.add(
+          "process-transcripts",
+          {
+            meetingName: meetingName,
+            recordingNumber: session.recordingNumber,
+            folder_name: folder_name,
+            sessionId: session.id,
+          },
+          {
+            jobId: `transcript-${meetingName}-${session.recordingNumber}`,
+            priority: 1,
+          }
+        );
+
+        console.log(
+          `🎯 Queued transcript processing for session ${session.recordingNumber}`
+        );
 
         processedCount++;
       }
@@ -2834,9 +2850,9 @@ const processConversation = async (
   meetingName: string,
   language: string,
   recordingNumber: number,
-  speakerQuality: number,
-  flagging: boolean,
-  flaggin_reasons: string[],
+  // speakerQuality: number,
+  // flagging: boolean,
+  // flaggin_reasons: string[],
   folder_name: string
 ) => {
   const conversation = await prisma.conversation.findFirst({
@@ -2920,11 +2936,12 @@ const processConversation = async (
     await prisma.conversation.update({
       where: { id: conversation.id },
       data: {
-        quality: Math.random() * (0.85 - 0.8) + 0.8,
+        // quality: Math.random() * (0.85 - 0.8) + 0.8,
+        quality: null,
         duration: totalDuration,
         earnings: calculateEarnings(totalDuration),
         flagged_status: true,
-        flagged_reasons: flaggin_reasons,
+        // flagged_reasons: flaggin_reasons,
         status: "incomplete",
       },
     });
@@ -2932,11 +2949,12 @@ const processConversation = async (
     await prisma.conversation.update({
       where: { id: conversation.id },
       data: {
-        quality: Math.random() * (0.85 - 0.8) + 0.8,
+        // quality: Math.random() * (0.85 - 0.8) + 0.8,
+        quality: null,
         duration: totalDuration,
         earnings: calculateEarnings(totalDuration),
         flagged_status: false,
-        flagged_reasons: flaggin_reasons,
+        // flagged_reasons: flaggin_reasons,
         status: "completed",
       },
     });
@@ -2964,28 +2982,28 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
 
   const s3FolderPath = `${meeting.language}/${folder_name}/recording-${recordingNumber}`;
 
-  console.log("🎙️  Step 1: Transcribing audio...");
-  await callAPI("/transcribe", {
-    language: meeting.language,
-    s3_folder_path: s3FolderPath,
-  });
-  console.log("✅ Transcription complete");
+  // console.log("🎙️  Step 1: Transcribing audio...");
+  // await callAPI("/transcribe", {
+  //   language: meeting.language,
+  //   s3_folder_path: s3FolderPath,
+  // });
+  // console.log("✅ Transcription complete");
 
-  console.log("📊 Step 2: Analyzing quality...");
-  const qualityData = await callAPI("/analyze-quality", {
-    language: meeting.language,
-    s3_transcript_path: `${s3FolderPath}/transcription.txt`,
-  });
-  console.log("✅ Quality analysis complete");
+  // console.log("📊 Step 2: Analyzing quality...");
+  // const qualityData = await callAPI("/analyze-quality", {
+  //   language: meeting.language,
+  //   s3_transcript_path: `${s3FolderPath}/transcription.txt`,
+  // });
+  // console.log("✅ Quality analysis complete");
 
-  console.log("Step 3: Flagging the conversation...");
-  const flagging_response = await callAPI("/flag-filter", {
-    s3_transcript_path: `${s3FolderPath}/transcription.txt`,
-    s3_quality_scores_path: `${s3FolderPath}/quality_scores.json`,
-    language: meeting.language,
-    check_similarity: false,
-  });
-  console.log("✅ flagging of coversation completed");
+  // console.log("Step 3: Flagging the conversation...");
+  // const flagging_response = await callAPI("/flag-filter", {
+  //   s3_transcript_path: `${s3FolderPath}/transcription.txt`,
+  //   s3_quality_scores_path: `${s3FolderPath}/quality_scores.json`,
+  //   language: meeting.language,
+  //   check_similarity: false,
+  // });
+  // console.log("✅ flagging of coversation completed");
 
   console.log("👥 Step 4: Processing conversations...");
   const recordings = await prisma.recording.findMany({
@@ -2998,22 +3016,22 @@ transcriptQueue.process("process-transcripts", async (job: any) => {
   await Promise.all(
     recordings.map((recording) => {
       const speakerKey = `speaker_${recording.participantNumber}`;
-      const speakerQuality = qualityData.speakers[speakerKey]?.final_score;
-      const totalDuration = qualityData.conversation_duration;
+      // const speakerQuality = qualityData.speakers[speakerKey]?.final_score;
+      // const totalDuration = qualityData.conversation_duration;
 
-      if (!speakerQuality) {
-        console.warn(`⚠️  No quality score for ${speakerKey}`);
-        return Promise.resolve();
-      }
+      // if (!speakerQuality) {
+      //   console.warn(`⚠️  No quality score for ${speakerKey}`);
+      //   return Promise.resolve();
+      // }
 
       return processConversation(
         recording,
         meetingName,
         meeting.language,
         recordingNumber,
-        speakerQuality,
-        flagging_response.should_flag,
-        flagging_response.reasons,
+        // speakerQuality,
+        // flagging_response.should_flag,
+        // flagging_response.reasons,
         folder_name
       );
     })
