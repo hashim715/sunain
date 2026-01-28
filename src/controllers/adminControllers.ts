@@ -1730,12 +1730,12 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
     const allDates =
       allDatesResponse.CommonPrefixes?.map((prefix) => prefix.Prefix) || [];
 
-    const lastTwoDates = allDates.sort((a, b) => a.localeCompare(b)).slice(-4);
+    const lastTwoDates = allDates.sort((a, b) => a.localeCompare(b)).slice(-3);
 
     logger.info(
       `Found ${
         allDates.length
-      } date folders, scanning only last 4: ${lastTwoDates.join(", ")}`
+      } date folders, scanning only last 3: ${lastTwoDates.join(", ")}`
     );
 
     const availableRecordings: string[] = [];
@@ -1746,7 +1746,7 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
 
     const MIN_SIZE_BYTES = 900 * 1024;
 
-    outerLoop: for (const dateFolder of allDates) {
+    outerLoop: for (const dateFolder of lastTwoDates) {
       const timeFoldersCommand = new ListObjectsV2Command({
         Bucket: BUCKET_NAME,
         Prefix: dateFolder,
