@@ -17,6 +17,7 @@ import { s3 } from "../config/aws_s3";
 import { exec } from "child_process";
 import { promisify } from "util";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { Mutex } from "async-mutex";
 
 const execAsync = promisify(exec);
 
@@ -1665,11 +1666,14 @@ export const deleteAnnotator: RequestHandler = async (
   }
 };
 
+const assignmentMutex = new Mutex();
+
 export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
   req: Request,
   res: Response
 ) => {
   let responseSent = false;
+  const release = await assignmentMutex.acquire();
 
   const sendResponse = (statusCode: number, data: any) => {
     if (!responseSent && !res.headersSent) {
@@ -1885,6 +1889,7 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
       message: err.message,
     });
   } finally {
+    release();
     await prisma.$disconnect();
   }
 };
