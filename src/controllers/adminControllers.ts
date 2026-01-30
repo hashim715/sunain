@@ -1734,7 +1734,7 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
     const allDates =
       allDatesResponse.CommonPrefixes?.map((prefix) => prefix.Prefix) || [];
 
-    const lastTwoDates = allDates.sort((a, b) => a.localeCompare(b)).slice(-3);
+    const lastTwoDates = allDates.sort((a, b) => a.localeCompare(b)).slice(-2);
 
     logger.info(
       `Found ${
@@ -1796,6 +1796,7 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
               file.Key?.endsWith("transcription.txt") ||
               file.Key?.endsWith("Transcription.txt")
           );
+
           if (!hasTranscription) {
             skippedNoTranscription++;
             continue;

@@ -49,7 +49,7 @@ model User {
   email_verified Boolean @default(false)
   password String?
   verified Boolean @default(true)
-  adminVerify String @default("active") // active, suspended, waiting
+  adminVerify String @default("waiting") // active, suspended, waiting
   sms_attempts_today Int @default(0)
   sms_attempts_reset_at DateTime?
 
