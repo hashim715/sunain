@@ -18,6 +18,8 @@ import { exec } from "child_process";
 import { promisify } from "util";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { Mutex } from "async-mutex";
+import fs from "fs";
+import path from "path";
 
 const execAsync = promisify(exec);
 
@@ -1668,6 +1670,19 @@ export const deleteAnnotator: RequestHandler = async (
 
 const assignmentMutex = new Mutex();
 
+const normalizePath = (path: string): string => {
+  try {
+    let decoded = path;
+
+    while (decoded !== decodeURIComponent(decoded)) {
+      decoded = decodeURIComponent(decoded);
+    }
+    return decoded;
+  } catch {
+    return path;
+  }
+};
+
 export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
   req: Request,
   res: Response
@@ -1715,8 +1730,7 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
     const alreadyAssignedRecordings = new Set<string>();
     allAnnotators.forEach((ann) => {
       ann.annotation_recordings?.forEach((recording) => {
-        alreadyAssignedRecordings.add(recording);
-        alreadyAssignedRecordings.add(decodeURIComponent(recording));
+        alreadyAssignedRecordings.add(normalizePath(recording));
       });
     });
 
@@ -1734,12 +1748,14 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
     const allDates =
       allDatesResponse.CommonPrefixes?.map((prefix) => prefix.Prefix) || [];
 
-    const lastTwoDates = allDates.sort((a, b) => a.localeCompare(b)).slice(-2);
+    const lastTwoDates = allDates
+      .sort((a, b) => a!.localeCompare(b!))
+      .slice(-2);
 
     logger.info(
       `Found ${
         allDates.length
-      } date folders, scanning only last 3: ${lastTwoDates.join(", ")}`
+      } date folders, scanning only last 2: ${lastTwoDates.join(", ")}`
     );
 
     const availableRecordings: string[] = [];
@@ -1775,13 +1791,11 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
             break outerLoop;
           if (!recordingPrefix.Prefix) continue;
 
-          const isAssigned =
-            alreadyAssignedRecordings.has(recordingPrefix.Prefix) ||
-            alreadyAssignedRecordings.has(
-              decodeURIComponent(recordingPrefix.Prefix)
-            );
+          const normalizedPrefix = normalizePath(recordingPrefix.Prefix);
 
-          if (isAssigned) continue;
+          if (alreadyAssignedRecordings.has(normalizedPrefix)) {
+            continue;
+          }
 
           const filesCommand = new ListObjectsV2Command({
             Bucket: BUCKET_NAME,
@@ -1791,10 +1805,8 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
           const filesResponse = await s3.send(filesCommand);
           const files = filesResponse.Contents || [];
 
-          const hasTranscription = files.some(
-            (file) =>
-              file.Key?.endsWith("transcription.txt") ||
-              file.Key?.endsWith("Transcription.txt")
+          const hasTranscription = files.some((file) =>
+            file.Key?.toLowerCase().endsWith("transcription.txt")
           );
 
           if (!hasTranscription) {
@@ -1815,10 +1827,8 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
           );
           if (hasAnnotation) continue;
 
-          const conversationFile = files.find(
-            (file) =>
-              file.Key?.endsWith("conversation.mp3") ||
-              file.Key?.endsWith("Conversation.mp3")
+          const conversationFile = files.find((file) =>
+            file.Key?.toLowerCase().endsWith("conversation.mp3")
           );
 
           if (!conversationFile || !conversationFile.Key) {
@@ -1837,14 +1847,13 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
             continue;
           }
 
-          availableRecordings.push(recordingPrefix.Prefix);
+          availableRecordings.push(normalizedPrefix);
+          alreadyAssignedRecordings.add(normalizedPrefix);
         }
       }
     }
 
-    logger.info(
-      `Found ${availableRecordings.length} available recordings (skipped ${skippedNoConversation} no mp3, ${skippedTooSmall} too small, ${skippedNoMetadata} no metadata, ${skippedNoTranscription} no transcription)`
-    );
+    logger.info(`Found ${availableRecordings.length} available recordings`);
 
     if (availableRecordings.length === 0) {
       return sendResponse(404, {
@@ -1860,7 +1869,13 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
     }
 
     const existingRecordings = annotator.annotation_recordings || [];
-    const combinedRecordings = [...existingRecordings, ...availableRecordings];
+
+    const existingNormalized = new Set(existingRecordings.map(normalizePath));
+    const newRecordings = availableRecordings.filter(
+      (r) => !existingNormalized.has(normalizePath(r))
+    );
+
+    const combinedRecordings = [...existingRecordings, ...newRecordings];
 
     await prisma.user.update({
       where: { id: annotator.id },
@@ -1869,18 +1884,13 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
 
     return sendResponse(200, {
       success: true,
-      message: `Successfully assigned ${availableRecordings.length} recordings to ${annotator.username}`,
+      message: `Successfully assigned ${newRecordings.length} recordings to ${annotator.username}`,
       assignment: {
         annotatorId: annotator.id,
         username: annotator.username,
         previousCount: existingRecordings.length,
         newCount: combinedRecordings.length,
-        addedCount: availableRecordings.length,
-        skippedNoConversation,
-        skippedTooSmall,
-        skippedNoMetadata,
-        skippedNoTranscription,
-        minSizeRequired: `${MIN_SIZE_BYTES / 1024} KB`,
+        addedCount: newRecordings.length,
       },
     });
   } catch (err: any) {
@@ -1894,6 +1904,114 @@ export const assignRecordingsToSpecificAnnotator: RequestHandler = async (
     await prisma.$disconnect();
   }
 };
+
+const CSV_PATH = path.join(__dirname, "../data/recordings.csv");
+
+const loadRecordingsFromCSV = (): string[] => {
+  const content = fs.readFileSync(CSV_PATH, "utf-8");
+  const lines = content.trim().split("\n").slice(1); // Skip header
+  return lines.map((line) => line.split(",")[0]); // Get folder column
+};
+
+export const assignRecordingsToSpecificAnnotatorUsingCSV: RequestHandler =
+  async (req: Request, res: Response) => {
+    let responseSent = false;
+    const release = await assignmentMutex.acquire();
+
+    const sendResponse = (statusCode: number, data: any) => {
+      if (!responseSent && !res.headersSent) {
+        responseSent = true;
+        return res.status(statusCode).json(data);
+      }
+    };
+
+    try {
+      const { annotatorId, recordingsPerAnnotator = 25 } = req.body;
+
+      if (!annotatorId) {
+        return sendResponse(400, { error: "Annotator ID is required" });
+      }
+
+      const annotator = await prisma.user.findUnique({
+        where: { id: annotatorId, is_annotator: true },
+        select: { id: true, username: true, annotation_recordings: true },
+      });
+
+      if (!annotator) {
+        return sendResponse(404, {
+          error: "Annotator not found or user is not an annotator",
+        });
+      }
+
+      // Get all already assigned recordings across all annotators
+      const allAnnotators = await prisma.user.findMany({
+        where: { is_annotator: true },
+        select: { annotation_recordings: true },
+      });
+
+      const alreadyAssignedRecordings = new Set<string>();
+      allAnnotators.forEach((ann) => {
+        ann.annotation_recordings?.forEach((recording) => {
+          alreadyAssignedRecordings.add(recording);
+          alreadyAssignedRecordings.add(decodeURIComponent(recording));
+        });
+      });
+
+      // Load valid recordings from CSV
+      const allRecordings = loadRecordingsFromCSV();
+
+      // Filter to unassigned recordings
+      const availableRecordings = allRecordings
+        .filter(
+          (folder) =>
+            !alreadyAssignedRecordings.has(folder) &&
+            !alreadyAssignedRecordings.has(decodeURIComponent(folder))
+        )
+        .slice(0, recordingsPerAnnotator);
+
+      logger.info(
+        `Found ${availableRecordings.length} available recordings from CSV`
+      );
+
+      if (availableRecordings.length === 0) {
+        return sendResponse(404, {
+          error: "No available unassigned recordings found",
+        });
+      }
+
+      const existingRecordings = annotator.annotation_recordings || [];
+      const combinedRecordings = [
+        ...existingRecordings,
+        ...availableRecordings,
+      ];
+
+      await prisma.user.update({
+        where: { id: annotator.id },
+        data: { annotation_recordings: combinedRecordings },
+      });
+
+      return sendResponse(200, {
+        success: true,
+        message: `Successfully assigned ${availableRecordings.length} recordings to ${annotator.username}`,
+        assignment: {
+          annotatorId: annotator.id,
+          username: annotator.username,
+          previousCount: existingRecordings.length,
+          newCount: combinedRecordings.length,
+          addedCount: availableRecordings.length,
+        },
+      });
+    } catch (err: any) {
+      logger.error(`Error assigning recordings: ${err.message}`);
+      return sendResponse(500, {
+        error: "Internal server error",
+        message: err.message,
+      });
+    } finally {
+      release();
+      await prisma.$disconnect();
+    }
+  };
 
 export const clearAnnotatorAssignments: RequestHandler = async (
   req: Request,
@@ -2196,15 +2314,22 @@ export const getPayrollData: RequestHandler = async (
   res: Response
 ) => {
   try {
+    const twoDaysAgo = new Date();
+    twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+
     const users = await prisma.user.findMany({
       where: {
         user_type: "user",
         language: "Arabic",
+        adminVerify: "active",
         conversations: {
           some: {
             paymentStatus: "unpaid",
             status: "completed",
             flagged_status: false,
+            createdAt: {
+              gte: twoDaysAgo,
+            },
           },
         },
       },
@@ -2214,6 +2339,9 @@ export const getPayrollData: RequestHandler = async (
             paymentStatus: "unpaid",
             status: "completed",
             flagged_status: false,
+            createdAt: {
+              gte: twoDaysAgo,
+            },
           },
           select: {
             id: true,
@@ -2223,6 +2351,7 @@ export const getPayrollData: RequestHandler = async (
             paymentStatus: true,
             status: true,
             meetingId: true,
+            createdAt: true,
             meeting: { select: { language: true } },
           },
         },

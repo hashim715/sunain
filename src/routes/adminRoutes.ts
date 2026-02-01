@@ -31,6 +31,7 @@ import {
   getPayrollData,
   getAnnotatorById,
   updateAnnotator,
+  assignRecordingsToSpecificAnnotatorUsingCSV,
 } from "../controllers/adminControllers";
 import { protectAdmin } from "../middleware/adminMiddleware";
 
@@ -107,3 +108,7 @@ adminRouter
   .get(protectAdmin, getAnnotatorById)
   .put(protectAdmin, updateAnnotator)
   .delete(protectAdmin, deleteAnnotator);
+
+adminRouter
+  .route("/assign-recordings-to-annotator-csv")
+  .post(protectAdmin, assignRecordingsToSpecificAnnotatorUsingCSV);
