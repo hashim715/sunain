@@ -48,7 +48,7 @@ model User {
   verification_token_expiry_email String?
   email_verified Boolean @default(false)
   password String?
-  verified Boolean @default(true)
+  verified Boolean @default(false)
   adminVerify String @default("waiting") // active, suspended, waiting
   sms_attempts_today Int @default(0)
   sms_attempts_reset_at DateTime?
